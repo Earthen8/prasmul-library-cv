@@ -8,7 +8,7 @@ from src.detector import DetectedObject
 
 PolygonPoints = list[tuple[int, int]]
 DEFAULT_EMPTY_REF_PATH = Path("config/empty_reference.jpg")
-DEFAULT_HSV_DIFF_RATIO = 0.18
+DEFAULT_HSV_DIFF_RATIO = 0.35
 
 
 @dataclass
@@ -190,8 +190,8 @@ def compute_hsv_foreground_ratio(
     current_frame: np.ndarray,
     reference_frame: np.ndarray,
     polygon: PolygonPoints,
-    hue_threshold: int = 12,
-    sat_threshold: int = 35,
+    hue_threshold: int = 22,
+    sat_threshold: int = 45,
 ) -> float:
     frame_h, frame_w = current_frame.shape[:2]
     x1, y1, x2, y2 = polygon_bounding_box(polygon)
