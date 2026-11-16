@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 import cv2
 import numpy as np
@@ -11,10 +12,11 @@ BELONGING_CLASS_NAMES = {
     63: "laptop",
     73: "book",
 }
+CUSTOM_TARGET_LABELS = {"person", "belonging", *BELONGING_CLASS_NAMES.values()}
 # Exclude chair (56) and dining table (60) so empty furniture never triggers occupancy.
 TARGET_CLASS_IDS = [PERSON_CLASS_ID, *BELONGING_CLASS_NAMES.keys()]
 DEFAULT_YOLO_IMGSZ = 960
-DEFAULT_YOLO_MODEL = "yolo11s.pt"
+DEFAULT_YOLO_MODEL = "best.pt" if Path("best.pt").exists() else "yolo11s.pt"
 
 
 @dataclass(frozen=True)
@@ -27,11 +29,15 @@ class DetectedObject:
 
     @property
     def is_person(self) -> bool:
-        return self.class_id == PERSON_CLASS_ID
+        return self.class_id == PERSON_CLASS_ID or self.label == "person"
 
     @property
     def is_belonging(self) -> bool:
-        return self.class_id in BELONGING_CLASS_NAMES
+        return (
+            self.class_id in BELONGING_CLASS_NAMES
+            or self.label == "belonging"
+            or self.label in BELONGING_CLASS_NAMES.values()
+        )
 
     @property
     def floor_point(self) -> tuple[int, int]:
@@ -99,6 +105,19 @@ def unscale_letterbox_coords(
     return (x1, y1, x2, y2)
 
 
+def resolve_target_class_ids(model: Any) -> list[int]:
+    names = getattr(model, "names", None)
+    if not isinstance(names, dict) or len(names) > 20:
+        return TARGET_CLASS_IDS
+
+    custom_ids = [
+        int(cls_id)
+        for cls_id, cls_name in names.items()
+        if str(cls_name).lower() in CUSTOM_TARGET_LABELS
+    ]
+    return custom_ids or TARGET_CLASS_IDS
+
+
 def parse_single_box(
     box: Any,
     scale: float = 1.0,
@@ -106,6 +125,7 @@ def parse_single_box(
     pad_h: int = 0,
     orig_w: int = 1280,
     orig_h: int = 720,
+    model_names: dict[int, str] | None = None,
 ) -> DetectedObject:
     coords = box.xyxy[0].cpu().numpy()
     x1, y1, x2, y2 = unscale_letterbox_coords(coords, scale, pad_w, pad_h, orig_w, orig_h)
@@ -113,7 +133,10 @@ def parse_single_box(
     cy = (y1 + y2) // 2
     class_id = int(box.cls[0].item())
     confidence = float(box.conf[0].item())
-    label = "person" if class_id == PERSON_CLASS_ID else BELONGING_CLASS_NAMES.get(class_id, "item")
+    if model_names and class_id in model_names:
+        label = str(model_names[class_id]).lower()
+    else:
+        label = "person" if class_id == PERSON_CLASS_ID else BELONGING_CLASS_NAMES.get(class_id, "item")
     return DetectedObject(
         class_id=class_id,
         label=label,
@@ -138,20 +161,28 @@ def detect_library_objects(
     orig_h, orig_w = frame.shape[:2]
     processed = apply_clahe_lighting(frame) if use_clahe else frame
     letterboxed, scale, pad_w, pad_h = letterbox_resize(processed, inference_size)
+    target_ids = resolve_target_class_ids(model)
+    model_names = getattr(model, "names", None)
 
     results = model.predict(
         source=letterboxed,
         imgsz=inference_size,
         conf=confidence_threshold,
-        classes=TARGET_CLASS_IDS,
+        classes=target_ids,
         verbose=False,
     )
     if not results or results[0].boxes is None:
         return []
     return [
         parse_single_box(
-            box, scale=scale, pad_w=pad_w, pad_h=pad_h, orig_w=orig_w, orig_h=orig_h
+            box,
+            scale=scale,
+            pad_w=pad_w,
+            pad_h=pad_h,
+            orig_w=orig_w,
+            orig_h=orig_h,
+            model_names=model_names if isinstance(model_names, dict) else None,
         )
         for box in results[0].boxes
-        if int(box.cls[0].item()) in TARGET_CLASS_IDS
+        if int(box.cls[0].item()) in target_ids
     ]
