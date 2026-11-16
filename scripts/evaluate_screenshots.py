@@ -4,9 +4,11 @@ from pathlib import Path
 import cv2
 from src.detector import detect_library_objects, load_yolo_model
 from src.seat_monitor import (
+    PolygonPoints,
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
-    load_table_zones,
+    load_zones_with_metadata,
+    scale_zones_to_frame,
 )
 
 
@@ -20,7 +22,8 @@ def parse_screenshot_filename(file_path: Path) -> tuple[str, str, str]:
 def evaluate_single_screenshot(
     image_path: Path,
     model,
-    zones: dict[str, tuple[int, int, int, int]],
+    zones: dict[str, PolygonPoints],
+    reference_res: tuple[int, int],
     confidence: float,
     annotated_dir: Path | None,
 ) -> dict[str, str | int]:
@@ -28,14 +31,16 @@ def evaluate_single_screenshot(
     if frame is None:
         raise RuntimeError(f"Failed to read image '{image_path}'.")
 
+    height, width = frame.shape[:2]
     day, category, number = parse_screenshot_filename(image_path)
     detections = detect_library_objects(model, frame, confidence_threshold=confidence)
     person_count = sum(1 for obj in detections if obj.is_person)
     belonging_count = sum(1 for obj in detections if obj.is_belonging)
 
     occupied_tables = 0
-    if category.lower() == "meja" and zones:
-        statuses = evaluate_all_table_zones(zones, detections, 0.0, 900.0, {})
+    if zones:
+        scaled_zones = scale_zones_to_frame(zones, reference_res, width, height)
+        statuses = evaluate_all_table_zones(scaled_zones, detections, 1, 15.0, 900.0, {})
         occupied_tables = sum(1 for item in statuses if item.is_occupied)
         if annotated_dir is not None:
             annotated = draw_seat_monitoring_overlay(frame, statuses, detections)
@@ -46,6 +51,7 @@ def evaluate_single_screenshot(
         "day": day,
         "category": category,
         "number": number,
+        "resolution": f"{width}x{height}",
         "person_count": person_count,
         "belonging_count": belonging_count,
         "occupied_tables": occupied_tables,
@@ -59,6 +65,7 @@ def write_evaluation_csv(rows: list[dict[str, str | int]], output_csv: Path) -> 
         "day",
         "category",
         "number",
+        "resolution",
         "person_count",
         "belonging_count",
         "occupied_tables",
@@ -77,6 +84,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path, default=Path("results/evaluation.csv"))
     parser.add_argument("--annotated-dir", type=Path, default=Path("results/annotated"))
     parser.add_argument("--zones", type=Path, default=Path("config/table_zones.json"))
+    parser.add_argument("--profile", default="Mezanin_1", help="Default ROI profile.")
     parser.add_argument("--conf", type=float, default=0.30, help="Confidence threshold.")
     return parser
 
@@ -90,13 +98,17 @@ def main() -> None:
     if not image_files:
         raise ValueError(f"No .jpg files found in '{args.input_dir}'.")
 
-    zones = load_table_zones(args.zones) if args.zones.exists() else {}
+    if args.zones.exists():
+        zones, ref_res = load_zones_with_metadata(args.zones, profile_name=args.profile)
+    else:
+        zones, ref_res = {}, (1280, 720)
+
     args.annotated_dir.mkdir(parents=True, exist_ok=True)
     model = load_yolo_model("yolo11n.pt")
 
     rows = [
         evaluate_single_screenshot(
-            img_path, model, zones, args.conf, args.annotated_dir
+            img_path, model, zones, ref_res, args.conf, args.annotated_dir
         )
         for img_path in image_files
     ]
