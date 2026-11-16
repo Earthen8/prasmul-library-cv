@@ -163,6 +163,25 @@ def trim_video_clip(
         capture.release()
 
 
+def extract_reference_frame(
+    video_path: Path,
+    output_path: Path,
+    timestamp: str = "00:00:00",
+) -> Path:
+    capture = open_video_capture(video_path)
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        target_frame = int(parse_timestamp_to_seconds(timestamp) * fps)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not save_single_frame(capture, target_frame, output_path):
+            raise RuntimeError(
+                f"Could not extract frame at '{timestamp}' from '{video_path}'."
+            )
+        return output_path
+    finally:
+        capture.release()
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Extract evaluation screenshots and short demo clips from CCTV videos."
@@ -182,6 +201,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
     clip_parser.add_argument("--output", required=True, type=Path, help="Output MP4 file.")
     clip_parser.add_argument("--start", default="00:00:00", help="Start time (HH:MM:SS).")
     clip_parser.add_argument("--duration", type=int, default=60, help="Duration in seconds.")
+
+    ref_parser = subparsers.add_parser(
+        "reference", help="Save a clean empty frame as config/empty_reference.jpg."
+    )
+    ref_parser.add_argument("--input", required=True, type=Path, help="Input video file.")
+    ref_parser.add_argument(
+        "--output", type=Path, default=Path("config/empty_reference.jpg"), help="Output JPG path."
+    )
+    ref_parser.add_argument("--time", default="00:00:00", help="Timestamp (MM:SS or HH:MM:SS).")
     return parser
 
 
@@ -207,6 +235,13 @@ def main() -> None:
             duration_seconds=args.duration,
         )
         print(f"Saved demo clip ({written} frames) to '{args.output}'.")
+    elif args.command == "reference":
+        saved_path = extract_reference_frame(
+            video_path=args.input,
+            output_path=args.output,
+            timestamp=args.time,
+        )
+        print(f"Saved empty reference frame to '{saved_path}'.")
 
 
 if __name__ == "__main__":

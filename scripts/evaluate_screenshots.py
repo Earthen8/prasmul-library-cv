@@ -10,9 +10,11 @@ if str(PROJECT_ROOT) not in sys.path:
 import cv2
 from src.detector import detect_library_objects, load_yolo_model
 from src.seat_monitor import (
+    DEFAULT_EMPTY_REF_PATH,
     PolygonPoints,
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
+    load_empty_reference_frame,
     load_zones_with_metadata,
     scale_zones_to_frame,
 )
@@ -32,6 +34,7 @@ def evaluate_single_screenshot(
     reference_res: tuple[int, int],
     confidence: float,
     inference_size: int,
+    empty_ref_path: Path,
     annotated_dir: Path | None,
 ) -> dict[str, str | int]:
     frame = cv2.imread(str(image_path))
@@ -47,10 +50,24 @@ def evaluate_single_screenshot(
     belonging_count = sum(1 for obj in detections if obj.is_belonging)
 
     occupied_tables = 0
+    hsv_fallback_tables = 0
     if zones:
         scaled_zones = scale_zones_to_frame(zones, reference_res, width, height)
-        statuses = evaluate_all_table_zones(scaled_zones, detections, 1, 15.0, 900.0, {})
+        empty_ref = load_empty_reference_frame(empty_ref_path, width, height)
+        statuses = evaluate_all_table_zones(
+            scaled_zones,
+            detections,
+            1,
+            15.0,
+            900.0,
+            {},
+            current_frame=frame,
+            empty_reference=empty_ref,
+        )
         occupied_tables = sum(1 for item in statuses if item.is_occupied)
+        hsv_fallback_tables = sum(
+            1 for item in statuses if item.detection_source == "HSV_FALLBACK"
+        )
         if annotated_dir is not None:
             annotated = draw_seat_monitoring_overlay(frame, statuses, detections)
             cv2.imwrite(str(annotated_dir / image_path.name), annotated)
@@ -64,6 +81,7 @@ def evaluate_single_screenshot(
         "person_count": person_count,
         "belonging_count": belonging_count,
         "occupied_tables": occupied_tables,
+        "hsv_fallback_tables": hsv_fallback_tables,
     }
 
 
@@ -78,6 +96,7 @@ def write_evaluation_csv(rows: list[dict[str, str | int]], output_csv: Path) -> 
         "person_count",
         "belonging_count",
         "occupied_tables",
+        "hsv_fallback_tables",
     ]
     with output_csv.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -93,8 +112,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path, default=Path("results/evaluation.csv"))
     parser.add_argument("--annotated-dir", type=Path, default=Path("results/annotated"))
     parser.add_argument("--zones", type=Path, default=Path("config/table_zones.json"))
+    parser.add_argument("--reference", type=Path, default=DEFAULT_EMPTY_REF_PATH)
     parser.add_argument("--profile", default="Mezanin_1", help="Default ROI profile.")
-    parser.add_argument("--conf", type=float, default=0.20, help="Confidence threshold.")
+    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
     parser.add_argument("--imgsz", type=int, default=960, help="YOLO inference resolution.")
     return parser
 
@@ -114,11 +134,11 @@ def main() -> None:
         zones, ref_res = {}, (1280, 720)
 
     args.annotated_dir.mkdir(parents=True, exist_ok=True)
-    model = load_yolo_model("yolo11n.pt")
+    model = load_yolo_model("yolo11s.pt")
 
     rows = [
         evaluate_single_screenshot(
-            img_path, model, zones, ref_res, args.conf, args.imgsz, args.annotated_dir
+            img_path, model, zones, ref_res, args.conf, args.imgsz, args.reference, args.annotated_dir
         )
         for img_path in image_files
     ]

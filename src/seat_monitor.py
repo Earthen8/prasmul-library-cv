@@ -7,6 +7,8 @@ from src.detector import DetectedObject
 
 
 PolygonPoints = list[tuple[int, int]]
+DEFAULT_EMPTY_REF_PATH = Path("config/empty_reference.jpg")
+DEFAULT_HSV_DIFF_RATIO = 0.18
 
 
 @dataclass
@@ -21,6 +23,7 @@ class TableZoneStatus:
     is_occupied: bool
     is_abandoned: bool
     detected_items: list[str]
+    detection_source: str = "NONE"
 
     @property
     def status_label(self) -> str:
@@ -28,6 +31,8 @@ class TableZoneStatus:
             return f"TERTINGGAL ({self.idle_seconds:.0f}s)"
         if self.has_belonging and not self.has_person:
             return f"IDLE ({self.idle_seconds:.0f}s)"
+        if self.is_occupied and self.detection_source == "HSV_FALLBACK":
+            return "TERISI (HSV)"
         if self.is_occupied:
             return "TERISI"
         return "KOSONG"
@@ -159,6 +164,65 @@ def update_zone_frame_timer(
     return (elapsed_frames, elapsed_frames / safe_fps)
 
 
+def load_empty_reference_frame(
+    reference_path: Path, target_width: int, target_height: int
+) -> np.ndarray | None:
+    if not reference_path.exists():
+        return None
+    image = cv2.imread(str(reference_path))
+    if image is None:
+        return None
+    h, w = image.shape[:2]
+    if w != target_width or h != target_height:
+        return cv2.resize(image, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+    return image
+
+
+def save_empty_reference_frame(frame: np.ndarray, reference_path: Path) -> Path:
+    if frame is None or frame.size == 0:
+        raise ValueError("Cannot save an empty reference frame.")
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(reference_path), frame)
+    return reference_path
+
+
+def compute_hsv_foreground_ratio(
+    current_frame: np.ndarray,
+    reference_frame: np.ndarray,
+    polygon: PolygonPoints,
+    hue_threshold: int = 12,
+    sat_threshold: int = 35,
+) -> float:
+    frame_h, frame_w = current_frame.shape[:2]
+    x1, y1, x2, y2 = polygon_bounding_box(polygon)
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(frame_w, x2), min(frame_h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+
+    ref_resized = (
+        reference_frame
+        if reference_frame.shape[:2] == (frame_h, frame_w)
+        else cv2.resize(reference_frame, (frame_w, frame_h), interpolation=cv2.INTER_LINEAR)
+    )
+    curr_crop = cv2.cvtColor(current_frame[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    ref_crop = cv2.cvtColor(ref_resized[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+
+    shifted_poly = np.array([(px - x1, py - y1) for px, py in polygon], dtype=np.int32)
+    mask = np.zeros((y2 - y1, x2 - x1), dtype=np.uint8)
+    cv2.fillPoly(mask, [shifted_poly], 255)
+    total_pixels = int(np.count_nonzero(mask))
+    if total_pixels == 0:
+        return 0.0
+
+    # Compare only Hue and Saturation channels to stay resilient against window sunlight glare (Value).
+    raw_h_diff = cv2.absdiff(curr_crop[:, :, 0], ref_crop[:, :, 0])
+    hue_diff = np.minimum(raw_h_diff, 180 - raw_h_diff)
+    sat_diff = cv2.absdiff(curr_crop[:, :, 1], ref_crop[:, :, 1])
+    changed = ((hue_diff > hue_threshold) | (sat_diff > sat_threshold)) & (mask > 0)
+    return float(np.count_nonzero(changed)) / float(total_pixels)
+
+
 def evaluate_single_zone(
     zone_name: str,
     polygon: PolygonPoints,
@@ -167,6 +231,9 @@ def evaluate_single_zone(
     video_fps: float,
     idle_threshold_seconds: float,
     idle_start_frames: dict[str, int],
+    current_frame: np.ndarray | None = None,
+    empty_reference: np.ndarray | None = None,
+    hsv_diff_threshold: float = DEFAULT_HSV_DIFF_RATIO,
 ) -> TableZoneStatus:
     inside_objects = [
         obj for obj in detections if is_object_in_zone(obj, polygon)
@@ -176,8 +243,19 @@ def evaluate_single_zone(
     idle_frames, idle_seconds = update_zone_frame_timer(
         zone_name, has_person, has_belonging, current_frame_index, video_fps, idle_start_frames
     )
+
     is_occupied = has_person or has_belonging
     is_abandoned = (not has_person) and has_belonging and (idle_seconds >= idle_threshold_seconds)
+    detection_source = "YOLO" if is_occupied else "NONE"
+    items = [obj.label for obj in inside_objects]
+
+    if not is_occupied and current_frame is not None and empty_reference is not None:
+        fg_ratio = compute_hsv_foreground_ratio(current_frame, empty_reference, polygon)
+        if fg_ratio > hsv_diff_threshold:
+            is_occupied = True
+            detection_source = "HSV_FALLBACK"
+            items = [f"hsv_diff({fg_ratio:.0%})"]
+
     return TableZoneStatus(
         zone_name=zone_name,
         polygon=polygon,
@@ -188,7 +266,8 @@ def evaluate_single_zone(
         idle_seconds=idle_seconds,
         is_occupied=is_occupied,
         is_abandoned=is_abandoned,
-        detected_items=[obj.label for obj in inside_objects],
+        detected_items=items,
+        detection_source=detection_source,
     )
 
 
@@ -199,16 +278,22 @@ def evaluate_all_table_zones(
     video_fps: float,
     idle_threshold_seconds: float,
     idle_start_frames: dict[str, int],
+    current_frame: np.ndarray | None = None,
+    empty_reference: np.ndarray | None = None,
+    hsv_diff_threshold: float = DEFAULT_HSV_DIFF_RATIO,
 ) -> list[TableZoneStatus]:
     return [
         evaluate_single_zone(
             zone_name=name,
-            polygon= coerce_to_polygon(list(poly), name) if isinstance(poly, tuple) else poly,
+            polygon=coerce_to_polygon(list(poly), name) if isinstance(poly, tuple) else poly,
             detections=detections,
             current_frame_index=current_frame_index,
             video_fps=video_fps,
             idle_threshold_seconds=idle_threshold_seconds,
             idle_start_frames=idle_start_frames,
+            current_frame=current_frame,
+            empty_reference=empty_reference,
+            hsv_diff_threshold=hsv_diff_threshold,
         )
         for name, poly in zones.items()
     ]

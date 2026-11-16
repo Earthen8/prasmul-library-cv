@@ -13,7 +13,8 @@ BELONGING_CLASS_NAMES = {
 }
 # Exclude chair (56) and dining table (60) so empty furniture never triggers occupancy.
 TARGET_CLASS_IDS = [PERSON_CLASS_ID, *BELONGING_CLASS_NAMES.keys()]
-DEFAULT_YOLO_IMGSZ = 640
+DEFAULT_YOLO_IMGSZ = 960
+DEFAULT_YOLO_MODEL = "yolo11s.pt"
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ def letterbox_resize(
     return canvas, scale, pad_w, pad_h
 
 
-def load_yolo_model(model_weights_path: str = "yolo11n.pt") -> Any:
+def load_yolo_model(model_weights_path: str = DEFAULT_YOLO_MODEL) -> Any:
     if not model_weights_path.strip():
         raise ValueError("Model weights path cannot be empty.")
     try:
@@ -125,7 +126,7 @@ def parse_single_box(
 def detect_library_objects(
     model: Any,
     frame: np.ndarray,
-    confidence_threshold: float = 0.30,
+    confidence_threshold: float = 0.25,
     inference_size: int = DEFAULT_YOLO_IMGSZ,
     use_clahe: bool = True,
 ) -> list[DetectedObject]:

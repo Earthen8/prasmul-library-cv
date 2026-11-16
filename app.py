@@ -7,11 +7,14 @@ import streamlit as st
 from src.demo_generator import build_simulated_detections, generate_sample_cctv_video
 from src.detector import detect_library_objects, load_yolo_model
 from src.seat_monitor import (
+    DEFAULT_EMPTY_REF_PATH,
     PolygonPoints,
     TableZoneStatus,
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
+    load_empty_reference_frame,
     load_zones_with_metadata,
+    save_empty_reference_frame,
     scale_zones_to_frame,
 )
 from src.traffic_heatmap import (
@@ -127,7 +130,7 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
                 "Ambang Kepercayaan Deteksi (Confidence)",
                 min_value=0.10,
                 max_value=0.85,
-                value=0.20,
+                value=0.25,
                 step=0.05,
             )
         )
@@ -169,6 +172,16 @@ def render_video_source_buttons(zones: dict[str, PolygonPoints]) -> None:
                 width="stretch",
             ):
                 st.session_state.is_streaming = False
+
+        if st.button(
+            "Simpan Frame Ini sebagai Referensi Kosong",
+            key="save_empty_ref_btn",
+            disabled=st.session_state.last_frame_rgb is None,
+            width="stretch",
+        ):
+            bgr = cv2.cvtColor(st.session_state.last_frame_rgb, cv2.COLOR_RGB2BGR)
+            save_empty_reference_frame(bgr, DEFAULT_EMPTY_REF_PATH)
+            st.success(f"Referensi kosong disimpan ke '{DEFAULT_EMPTY_REF_PATH}'.")
 
 
 def render_empty_or_error_state() -> bool:
@@ -292,7 +305,7 @@ def resolve_frame_detections(
 ):
     if st.session_state.is_simulation_clip:
         return build_simulated_detections(frame_index, camera_mode, scaled_zones)
-    model = get_cached_yolo_model("yolo11n.pt")
+    model = get_cached_yolo_model("yolo11s.pt")
     return detect_library_objects(
         model, frame, confidence_threshold=confidence, use_clahe=use_clahe
     )
@@ -349,6 +362,7 @@ def process_single_video_frame(
     scaled_zones: dict[str, PolygonPoints],
     idle_frame_timers: dict[str, int],
     heatmap_acc: TrafficHeatmapAccumulator,
+    empty_reference=None,
 ):
     st.session_state.processed_count += 1
     detections = resolve_frame_detections(
@@ -360,7 +374,14 @@ def process_single_video_frame(
         annotated = render_heatmap_overlay(annotated, heatmap_acc, detections)
     if camera_mode in (TABLE_MODE, HYBRID_RAK2_MODE) and scaled_zones:
         st.session_state.table_statuses = evaluate_all_table_zones(
-            scaled_zones, detections, frame_idx, fps, idle_threshold, idle_frame_timers
+            scaled_zones,
+            detections,
+            frame_idx,
+            fps,
+            idle_threshold,
+            idle_frame_timers,
+            current_frame=frame,
+            empty_reference=empty_reference,
         )
         annotated = draw_seat_monitoring_overlay(
             annotated, st.session_state.table_statuses, detections
@@ -379,7 +400,7 @@ def run_streaming_loop(
     slots: tuple,
 ) -> None:
     metrics_slot, alert_slot, video_slot, table_slot, loading_slot = slots
-    loading_slot.info("Status Memuat (Loading State): Menyiapkan decoder video dan bobot YOLO11n...")
+    loading_slot.info("Status Memuat (Loading State): Menyiapkan decoder video dan bobot YOLO11s...")
     capture = cv2.VideoCapture(str(st.session_state.video_path))
     loading_slot.empty()
     if not capture.isOpened():
@@ -391,6 +412,7 @@ def run_streaming_loop(
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
     scaled_zones = scale_zones_to_frame(raw_zones, reference_res, width, height)
+    empty_reference = load_empty_reference_frame(DEFAULT_EMPTY_REF_PATH, width, height)
     heatmap_acc = TrafficHeatmapAccumulator(height, width)
     idle_frame_timers: dict[str, int] = {}
     frame_idx = 0
@@ -401,11 +423,23 @@ def run_streaming_loop(
                 st.session_state.is_streaming = False
                 break
             frame_idx += 1
+            if empty_reference is None:
+                empty_reference = frame.copy()
             if frame_skip > 1 and frame_idx % frame_skip != 1:
                 st.session_state.skipped_count += 1
                 continue
             annotated = process_single_video_frame(
-                frame, frame_idx, fps, camera_mode, idle_threshold, confidence, use_clahe, scaled_zones, idle_frame_timers, heatmap_acc
+                frame,
+                frame_idx,
+                fps,
+                camera_mode,
+                idle_threshold,
+                confidence,
+                use_clahe,
+                scaled_zones,
+                idle_frame_timers,
+                heatmap_acc,
+                empty_reference=empty_reference,
             )
             update_ui_placeholders(camera_mode, annotated, metrics_slot, alert_slot, video_slot, table_slot)
             time.sleep(0.06)

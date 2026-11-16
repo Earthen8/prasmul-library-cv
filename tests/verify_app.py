@@ -44,7 +44,7 @@ def verify_per_profile_roi_scaling() -> None:
     zones_r1, ref_r1 = load_zones_with_metadata(Path("config/table_zones.json"), "Rak_1")
     assert ref_m1 == (1024, 604) and len(zones_m1) == 4
     assert ref_r2 == (1024, 575) and len(zones_r2) == 1
-    assert ref_r1 == (1024, 574) and len(zones_r1) == 3
+    assert ref_r1 == (1920, 1080) and len(zones_r1) == 3
 
     scaled_hd = scale_zones_to_frame(zones_r2, ref_r2, 2048, 1150)
     orig_pt = zones_r2["Meja_Baca_Belakang"][0]
@@ -68,6 +68,30 @@ def verify_frame_skip_and_bookshelf_filter() -> None:
     # Shelf book outside monitored polygon must remain unannotated (black pixels)
     assert np.all(overlay[100, 520] == 0)
     print("[PASS] Frame-skip idle timer & bookshelf book overlay filtering verified.")
+
+
+def verify_hsv_fallback_detection() -> None:
+    zones = {"Meja_01": [(50, 50), (250, 50), (250, 250), (50, 250)]}
+    # Reference frame: bright yellow sofa (BGR: 0, 210, 230) inside Meja_01
+    empty_ref = np.full((300, 300, 3), (0, 210, 230), dtype=np.uint8)
+
+    # Case 1: Only sunlight glare (Value channel shift, same Hue/Saturation) -> must stay KOSONG
+    glare_frame = np.full((300, 300, 3), (0, 255, 255), dtype=np.uint8)
+    glare_status = evaluate_all_table_zones(
+        zones, [], 1, 15.0, 3.0, {}, current_frame=glare_frame, empty_reference=empty_ref
+    )[0]
+    assert not glare_status.is_occupied and glare_status.detection_source == "NONE"
+
+    # Case 2: YOLO misses person (detections=[]), but dark blue shirt covers >25% of sofa
+    occupied_frame = glare_frame.copy()
+    occupied_frame[90:210, 90:210] = (140, 40, 30)
+    fallback_status = evaluate_all_table_zones(
+        zones, [], 2, 15.0, 3.0, {}, current_frame=occupied_frame, empty_reference=empty_ref
+    )[0]
+    assert fallback_status.is_occupied is True
+    assert fallback_status.detection_source == "HSV_FALLBACK"
+    assert fallback_status.status_label == "TERISI (HSV)"
+    print("[PASS] Hybrid HSV fallback verified: glare ignored, seated occlusion -> TERISI (HSV).")
 
 
 def verify_heatmap_floor_point_and_decay() -> None:
@@ -117,6 +141,7 @@ if __name__ == "__main__":
     verify_letterbox_and_clahe()
     verify_per_profile_roi_scaling()
     verify_frame_skip_and_bookshelf_filter()
+    verify_hsv_fallback_detection()
     verify_heatmap_floor_point_and_decay()
     verify_streamlit_ui_interactions()
     verify_media_extraction_scripts()
