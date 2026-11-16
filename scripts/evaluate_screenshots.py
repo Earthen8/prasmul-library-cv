@@ -1,6 +1,12 @@
 import argparse
 import csv
 from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import cv2
 from src.detector import detect_library_objects, load_yolo_model
 from src.seat_monitor import (
