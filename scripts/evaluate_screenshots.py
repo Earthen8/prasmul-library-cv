@@ -31,6 +31,7 @@ def evaluate_single_screenshot(
     zones: dict[str, PolygonPoints],
     reference_res: tuple[int, int],
     confidence: float,
+    inference_size: int,
     annotated_dir: Path | None,
 ) -> dict[str, str | int]:
     frame = cv2.imread(str(image_path))
@@ -39,7 +40,9 @@ def evaluate_single_screenshot(
 
     height, width = frame.shape[:2]
     day, category, number = parse_screenshot_filename(image_path)
-    detections = detect_library_objects(model, frame, confidence_threshold=confidence)
+    detections = detect_library_objects(
+        model, frame, confidence_threshold=confidence, inference_size=inference_size
+    )
     person_count = sum(1 for obj in detections if obj.is_person)
     belonging_count = sum(1 for obj in detections if obj.is_belonging)
 
@@ -91,7 +94,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--annotated-dir", type=Path, default=Path("results/annotated"))
     parser.add_argument("--zones", type=Path, default=Path("config/table_zones.json"))
     parser.add_argument("--profile", default="Mezanin_1", help="Default ROI profile.")
-    parser.add_argument("--conf", type=float, default=0.30, help="Confidence threshold.")
+    parser.add_argument("--conf", type=float, default=0.20, help="Confidence threshold.")
+    parser.add_argument("--imgsz", type=int, default=960, help="YOLO inference resolution.")
     return parser
 
 
@@ -114,7 +118,7 @@ def main() -> None:
 
     rows = [
         evaluate_single_screenshot(
-            img_path, model, zones, ref_res, args.conf, args.annotated_dir
+            img_path, model, zones, ref_res, args.conf, args.imgsz, args.annotated_dir
         )
         for img_path in image_files
     ]

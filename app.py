@@ -125,9 +125,9 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
         confidence = float(
             st.slider(
                 "Ambang Kepercayaan Deteksi (Confidence)",
-                min_value=0.15,
+                min_value=0.10,
                 max_value=0.85,
-                value=0.30,
+                value=0.20,
                 step=0.05,
             )
         )

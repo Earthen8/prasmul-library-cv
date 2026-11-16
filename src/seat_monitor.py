@@ -119,6 +119,27 @@ def is_point_inside_zone(point: tuple[int, int], zone_shape: PolygonPoints | tup
     return cv2.pointPolygonTest(contour, (float(point[0]), float(point[1])), False) >= 0.0
 
 
+def is_object_in_zone(
+    obj: DetectedObject,
+    polygon: PolygonPoints,
+    min_overlap_points: int = 2,
+) -> bool:
+    contour = np.array(polygon, dtype=np.int32)
+    if cv2.pointPolygonTest(contour, (float(obj.center[0]), float(obj.center[1])), False) >= 0.0:
+        return True
+
+    x1, y1, x2, y2 = obj.bbox
+    xs = (x1 + (x2 - x1) // 4, (x1 + x2) // 2, x2 - (x2 - x1) // 4)
+    ys = (y1 + (y2 - y1) // 4, (y1 + y2) // 2, y2 - (y2 - y1) // 4)
+    hits = sum(
+        1
+        for px in xs
+        for py in ys
+        if cv2.pointPolygonTest(contour, (float(px), float(py)), False) >= 0.0
+    )
+    return hits >= min_overlap_points
+
+
 def update_zone_frame_timer(
     zone_name: str,
     has_person: bool,
@@ -148,7 +169,7 @@ def evaluate_single_zone(
     idle_start_frames: dict[str, int],
 ) -> TableZoneStatus:
     inside_objects = [
-        obj for obj in detections if is_point_inside_zone(obj.center, polygon)
+        obj for obj in detections if is_object_in_zone(obj, polygon)
     ]
     has_person = any(obj.is_person for obj in inside_objects)
     has_belonging = any(obj.is_belonging for obj in inside_objects)
@@ -212,7 +233,7 @@ def draw_seat_monitoring_overlay(
     monitored_polys = [status.polygon for status in statuses]
     for obj in detections:
         if obj.is_belonging and monitored_polys:
-            if not any(is_point_inside_zone(obj.center, poly) for poly in monitored_polys):
+            if not any(is_object_in_zone(obj, poly) for poly in monitored_polys):
                 continue
         x1, y1, x2, y2 = obj.bbox
         color = (210, 110, 30) if obj.is_person else (20, 140, 220)
