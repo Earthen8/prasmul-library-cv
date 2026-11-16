@@ -1,0 +1,108 @@
+import argparse
+import csv
+from pathlib import Path
+import cv2
+from src.detector import detect_library_objects, load_yolo_model
+from src.seat_monitor import (
+    draw_seat_monitoring_overlay,
+    evaluate_all_table_zones,
+    load_table_zones,
+)
+
+
+def parse_screenshot_filename(file_path: Path) -> tuple[str, str, str]:
+    parts = file_path.stem.split("_")
+    if len(parts) < 3:
+        return ("Unknown", "Unknown", file_path.stem)
+    return (parts[0], parts[1], parts[2])
+
+
+def evaluate_single_screenshot(
+    image_path: Path,
+    model,
+    zones: dict[str, tuple[int, int, int, int]],
+    confidence: float,
+    annotated_dir: Path | None,
+) -> dict[str, str | int]:
+    frame = cv2.imread(str(image_path))
+    if frame is None:
+        raise RuntimeError(f"Failed to read image '{image_path}'.")
+
+    day, category, number = parse_screenshot_filename(image_path)
+    detections = detect_library_objects(model, frame, confidence_threshold=confidence)
+    person_count = sum(1 for obj in detections if obj.is_person)
+    belonging_count = sum(1 for obj in detections if obj.is_belonging)
+
+    occupied_tables = 0
+    if category.lower() == "meja" and zones:
+        statuses = evaluate_all_table_zones(zones, detections, 0.0, 900.0, {})
+        occupied_tables = sum(1 for item in statuses if item.is_occupied)
+        if annotated_dir is not None:
+            annotated = draw_seat_monitoring_overlay(frame, statuses, detections)
+            cv2.imwrite(str(annotated_dir / image_path.name), annotated)
+
+    return {
+        "filename": image_path.name,
+        "day": day,
+        "category": category,
+        "number": number,
+        "person_count": person_count,
+        "belonging_count": belonging_count,
+        "occupied_tables": occupied_tables,
+    }
+
+
+def write_evaluation_csv(rows: list[dict[str, str | int]], output_csv: Path) -> None:
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "filename",
+        "day",
+        "category",
+        "number",
+        "person_count",
+        "belonging_count",
+        "occupied_tables",
+    ]
+    with output_csv.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run YOLO11 batch evaluation on the 150 CCTV screenshots (Hari_Kategori_Nomor.jpg)."
+    )
+    parser.add_argument("--input-dir", required=True, type=Path, help="Folder of screenshots.")
+    parser.add_argument("--output-csv", type=Path, default=Path("results/evaluation.csv"))
+    parser.add_argument("--annotated-dir", type=Path, default=Path("results/annotated"))
+    parser.add_argument("--zones", type=Path, default=Path("config/table_zones.json"))
+    parser.add_argument("--conf", type=float, default=0.30, help="Confidence threshold.")
+    return parser
+
+
+def main() -> None:
+    args = build_argument_parser().parse_args()
+    if not args.input_dir.exists():
+        raise FileNotFoundError(f"Screenshot directory '{args.input_dir}' does not exist.")
+
+    image_files = sorted(args.input_dir.glob("*.jpg"))
+    if not image_files:
+        raise ValueError(f"No .jpg files found in '{args.input_dir}'.")
+
+    zones = load_table_zones(args.zones) if args.zones.exists() else {}
+    args.annotated_dir.mkdir(parents=True, exist_ok=True)
+    model = load_yolo_model("yolo11n.pt")
+
+    rows = [
+        evaluate_single_screenshot(
+            img_path, model, zones, args.conf, args.annotated_dir
+        )
+        for img_path in image_files
+    ]
+    write_evaluation_csv(rows, args.output_csv)
+    print(f"Evaluated {len(rows)} screenshots. CSV saved to '{args.output_csv}'.")
+
+
+if __name__ == "__main__":
+    main()
