@@ -87,8 +87,21 @@ def render_header() -> None:
             st.rerun()
 
 
+def infer_camera_mode_from_filename(filename: str) -> str | None:
+    upper = filename.upper()
+    if "CCTV01" in upper or "RAK_1" in upper or "RAK1" in upper:
+        return AISLE_MODE
+    if "CCTV02" in upper or "RAK_2" in upper or "RAK2" in upper:
+        return HYBRID_RAK2_MODE
+    if "CCTV03" in upper or "MEZANIN" in upper:
+        return TABLE_MODE
+    return None
+
+
 def handle_uploaded_video(uploaded_file) -> None:
     if uploaded_file is None:
+        return
+    if st.session_state.get("last_uploaded_name") == uploaded_file.name:
         return
     suffix = Path(uploaded_file.name).suffix or ".mp4"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_video:
@@ -96,6 +109,12 @@ def handle_uploaded_video(uploaded_file) -> None:
         st.session_state.video_path = Path(temp_video.name)
         st.session_state.is_simulation_clip = False
         st.session_state.error_message = None
+        st.session_state.last_uploaded_name = uploaded_file.name
+
+    inferred_mode = infer_camera_mode_from_filename(uploaded_file.name)
+    if inferred_mode and st.session_state.get("camera_mode_select") != inferred_mode:
+        st.session_state.camera_mode_select = inferred_mode
+        st.rerun()
 
 
 def activate_simulation_demo(zones: dict[str, PolygonPoints]) -> None:
@@ -118,6 +137,7 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
             "Pilih Kamera CCTV (berdasarkan ID)",
             options=[AISLE_MODE, HYBRID_RAK2_MODE, TABLE_MODE],
             index=2,
+            key="camera_mode_select",
         )
         st.session_state.detector_backend = st.selectbox(
             "Model Deteksi (Backend)",
