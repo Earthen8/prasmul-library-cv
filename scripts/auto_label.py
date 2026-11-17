@@ -7,7 +7,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import cv2
-from src.detector import load_yolo_model, detect_library_objects
+from src.detector import (
+    DEFAULT_ROBOFLOW_MODEL_ID,
+    DEFAULT_YOLO_MODEL,
+    detect_library_objects,
+    detect_library_objects_roboflow,
+    load_yolo_model,
+)
 
 
 def convert_bbox_to_yolo_format(
@@ -25,17 +31,24 @@ def preannotate_image(
     image_path: Path,
     output_labels_dir: Path,
     model,
-    confidence: float = 0.20,
+    confidence: float = 0.25,
     inference_size: int = 960,
+    backend: str = "local",
+    model_id: str = DEFAULT_ROBOFLOW_MODEL_ID,
 ) -> int:
     frame = cv2.imread(str(image_path))
     if frame is None:
         return 0
 
     height, width = frame.shape[:2]
-    detections = detect_library_objects(
-        model, frame, confidence_threshold=confidence, inference_size=inference_size
-    )
+    if backend == "roboflow":
+        detections = detect_library_objects_roboflow(
+            frame, model_id=model_id, confidence_threshold=confidence
+        )
+    else:
+        detections = detect_library_objects(
+            model, frame, confidence_threshold=confidence, inference_size=inference_size
+        )
 
     label_lines = []
     for obj in detections:
@@ -55,8 +68,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--images-dir", type=Path, default=Path("dataset/screenshots"))
     parser.add_argument("--labels-dir", type=Path, default=Path("dataset/labels"))
-    parser.add_argument("--conf", type=float, default=0.20)
+    parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=960)
+    parser.add_argument("--backend", choices=["local", "roboflow"], default="roboflow")
+    parser.add_argument("--model-id", default=DEFAULT_ROBOFLOW_MODEL_ID)
     return parser
 
 
@@ -71,13 +86,19 @@ def main() -> None:
         print("No images found.")
         return
 
-    print(f"Loading YOLO11s to auto-label {len(images)} images...")
-    model = load_yolo_model("yolo11s.pt")
+    print(f"Auto-labeling {len(images)} images using backend '{args.backend}'...")
+    model = None if args.backend == "roboflow" else load_yolo_model(DEFAULT_YOLO_MODEL)
 
     total_boxes = 0
     for img_path in images:
         count = preannotate_image(
-            img_path, args.labels_dir, model, confidence=args.conf, inference_size=args.imgsz
+            img_path,
+            args.labels_dir,
+            model,
+            confidence=args.conf,
+            inference_size=args.imgsz,
+            backend=args.backend,
+            model_id=args.model_id,
         )
         total_boxes += count
 
