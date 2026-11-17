@@ -27,6 +27,18 @@ def has_significant_movement(
     return nearest_distance >= min_movement_px
 
 
+def is_point_in_any_polygon(
+    point: tuple[int, int], polygons: dict[str, list[tuple[int, int]]] | None
+) -> bool:
+    if not polygons:
+        return False
+    for pts in polygons.values():
+        contour = np.array(pts, dtype=np.int32)
+        if cv2.pointPolygonTest(contour, (float(point[0]), float(point[1])), False) >= 0:
+            return True
+    return False
+
+
 class TrafficHeatmapAccumulator:
     def __init__(
         self,
@@ -52,9 +64,17 @@ class TrafficHeatmapAccumulator:
             "Lorong Kanan": 0,
         }
 
-    def record_persons(self, detections: list[DetectedObject]) -> AisleTrafficSummary:
+    def record_persons(
+        self,
+        detections: list[DetectedObject],
+        excluded_zones: dict[str, list[tuple[int, int]]] | None = None,
+    ) -> AisleTrafficSummary:
         self.grid *= self.decay_factor
-        persons = [obj for obj in detections if obj.is_person]
+        persons = [
+            obj
+            for obj in detections
+            if obj.is_person and not is_point_in_any_polygon(obj.floor_point, excluded_zones)
+        ]
         current_centers: list[tuple[int, int]] = []
         moving_count = 0
 

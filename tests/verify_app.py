@@ -106,6 +106,11 @@ def verify_heatmap_floor_point_and_decay() -> None:
     peak_second = float(acc.grid.max())
     assert first.moving_person_count == 1 and second.moving_person_count == 0
     assert peak_second < peak_first
+
+    seated_zones = {"Meja_01": [(50, 50), (200, 50), (200, 400), (50, 400)]}
+    seated_person = DetectedObject(0, "person", 0.9, (100, 200, 150, 320), (125, 260))
+    excluded = acc.record_persons([person, seated_person], excluded_zones=seated_zones)
+    assert excluded.active_person_count == 1
     print("[PASS] Floor-point heatmap accumulation, motion filter & decay verified.")
 
 

@@ -153,6 +153,7 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
                 max_value=0.85,
                 value=0.25,
                 step=0.05,
+                help="Nilai lebih KECIL (0.20–0.35) lebih sensitif menangkap objek jauh/duduk. Jangan diset tinggi (mis. 0.85) karena deteksi akan terfilter hilang.",
             )
         )
         use_clahe = st.checkbox(
@@ -360,16 +361,13 @@ def update_ui_placeholders(
     if camera_mode == TABLE_MODE:
         metrics_slot.markdown(format_table_metrics_html(statuses), unsafe_allow_html=True)
         table_slot.markdown(build_table_zones_markdown(statuses))
-    elif camera_mode == AISLE_MODE:
-        metrics_slot.markdown(format_aisle_metrics_html(summary), unsafe_allow_html=True)
-        table_slot.markdown(build_aisle_sectors_markdown(summary))
     else:
         metrics_slot.markdown(format_table_metrics_html(statuses), unsafe_allow_html=True)
         combined_md = build_table_zones_markdown(statuses) + "\n\n" + build_aisle_sectors_markdown(summary)
         table_slot.markdown(combined_md)
 
     abandoned = [item.zone_name for item in statuses if item.is_abandoned]
-    if abandoned and camera_mode != AISLE_MODE:
+    if abandoned:
         alert_slot.markdown(
             f'<div class="status-banner-alert" role="alert">'
             f"PERINGATAN BARANG TERTINGGAL: Barang tanpa pemilik melebihi batas waktu pada <strong>{', '.join(abandoned)}</strong>."
@@ -399,9 +397,11 @@ def process_single_video_frame(
     )
     annotated = frame.copy()
     if camera_mode in (AISLE_MODE, HYBRID_RAK2_MODE):
-        st.session_state.aisle_summary = heatmap_acc.record_persons(detections)
+        st.session_state.aisle_summary = heatmap_acc.record_persons(
+            detections, excluded_zones=scaled_zones
+        )
         annotated = render_heatmap_overlay(annotated, heatmap_acc, detections)
-    if camera_mode in (TABLE_MODE, HYBRID_RAK2_MODE) and scaled_zones:
+    if camera_mode in (TABLE_MODE, AISLE_MODE, HYBRID_RAK2_MODE) and scaled_zones:
         st.session_state.table_statuses = evaluate_all_table_zones(
             scaled_zones,
             detections,
@@ -479,12 +479,17 @@ def run_streaming_loop(
 def render_static_snapshot(
     camera_mode: str, metrics_slot, alert_slot, video_slot, table_slot
 ) -> None:
-    if camera_mode == AISLE_MODE:
-        metrics_slot.markdown(format_aisle_metrics_html(st.session_state.aisle_summary), unsafe_allow_html=True)
-        table_slot.markdown(build_aisle_sectors_markdown(st.session_state.aisle_summary))
-    else:
+    if camera_mode == TABLE_MODE:
         metrics_slot.markdown(format_table_metrics_html(st.session_state.table_statuses), unsafe_allow_html=True)
         table_slot.markdown(build_table_zones_markdown(st.session_state.table_statuses))
+    else:
+        metrics_slot.markdown(format_table_metrics_html(st.session_state.table_statuses), unsafe_allow_html=True)
+        combined_md = (
+            build_table_zones_markdown(st.session_state.table_statuses)
+            + "\n\n"
+            + build_aisle_sectors_markdown(st.session_state.aisle_summary)
+        )
+        table_slot.markdown(combined_md)
 
     if st.session_state.last_frame_rgb is not None:
         video_slot.image(
