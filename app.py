@@ -5,7 +5,13 @@ import cv2
 import streamlit as st
 
 from src.demo_generator import build_simulated_detections, generate_sample_cctv_video
-from src.detector import detect_library_objects, load_yolo_model
+from src.detector import (
+    DEFAULT_ROBOFLOW_MODEL_ID,
+    DEFAULT_YOLO_MODEL,
+    detect_library_objects,
+    detect_library_objects_roboflow,
+    load_yolo_model,
+)
 from src.seat_monitor import (
     DEFAULT_EMPTY_REF_PATH,
     PolygonPoints,
@@ -28,6 +34,8 @@ from src.ui_styles import apply_custom_styles
 TABLE_MODE = "Kamera Meja Baca (Seat Occupancy & Abandoned Object)"
 AISLE_MODE = "Kamera Rak Buku (Foot Traffic & Heatmap)"
 HYBRID_RAK2_MODE = "Kamera Rak 2 (Heatmap Lorong + Meja Belakang)"
+ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS (Cloud - 86% mAP)"
+LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
 MODE_TO_PROFILE = {
     TABLE_MODE: "Mezanin_1",
     AISLE_MODE: "Rak_1",
@@ -54,6 +62,8 @@ def init_session_state() -> None:
         "processed_count": 0,
         "skipped_count": 0,
         "error_message": None,
+        "detector_backend": ROBOFLOW_BACKEND,
+        "roboflow_api_key": "",
     }
     for key, default_val in defaults.items():
         if key not in st.session_state:
@@ -109,6 +119,17 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
             options=[TABLE_MODE, AISLE_MODE, HYBRID_RAK2_MODE],
             index=0,
         )
+        st.session_state.detector_backend = st.selectbox(
+            "Model Deteksi (Backend)",
+            options=[ROBOFLOW_BACKEND, LOCAL_BACKEND],
+            index=0,
+        )
+        if st.session_state.detector_backend == ROBOFLOW_BACKEND:
+            st.session_state.roboflow_api_key = st.text_input(
+                "Roboflow API Key (opsional jika sudah di .env)",
+                value=st.session_state.roboflow_api_key,
+                type="password",
+            )
         frame_skip = st.slider(
             "Interval Frame Skipping (Inferensi tiap N frame)",
             min_value=1,
@@ -305,7 +326,15 @@ def resolve_frame_detections(
 ):
     if st.session_state.is_simulation_clip:
         return build_simulated_detections(frame_index, camera_mode, scaled_zones)
-    model = get_cached_yolo_model("yolo11s.pt")
+    if st.session_state.get("detector_backend") == ROBOFLOW_BACKEND:
+        return detect_library_objects_roboflow(
+            frame,
+            model_id=DEFAULT_ROBOFLOW_MODEL_ID,
+            api_key=st.session_state.get("roboflow_api_key") or None,
+            confidence_threshold=confidence,
+            use_clahe=use_clahe,
+        )
+    model = get_cached_yolo_model(DEFAULT_YOLO_MODEL)
     return detect_library_objects(
         model, frame, confidence_threshold=confidence, use_clahe=use_clahe
     )

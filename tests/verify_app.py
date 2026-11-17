@@ -8,6 +8,7 @@ from src.detector import (
     TARGET_CLASS_IDS,
     apply_clahe_lighting,
     letterbox_resize,
+    parse_roboflow_prediction,
     unscale_letterbox_coords,
 )
 from src.seat_monitor import (
@@ -137,6 +138,18 @@ def verify_media_extraction_scripts() -> None:
     print("[PASS] Media extraction and clip trimming verified.")
 
 
+def verify_roboflow_prediction_parsing() -> None:
+    person_pred = {"x": 200.0, "y": 300.0, "width": 80.0, "height": 120.0, "confidence": 0.91, "class": "0", "class_id": 0}
+    bag_pred = {"x": 500.0, "y": 400.0, "width": 40.0, "height": 40.0, "confidence": 0.78, "class": "1", "class_id": 1}
+    person_obj = parse_roboflow_prediction(person_pred, 1920, 1080)
+    bag_obj = parse_roboflow_prediction(bag_pred, 1920, 1080)
+    assert person_obj.is_person and person_obj.label == "person"
+    assert person_obj.bbox == (160, 240, 240, 360)
+    assert bag_obj.is_belonging and bag_obj.label == "belonging"
+    assert bag_obj.bbox == (480, 380, 520, 420)
+    print("[PASS] Roboflow RF-DETR NAS prediction parsing verified.")
+
+
 if __name__ == "__main__":
     verify_letterbox_and_clahe()
     verify_per_profile_roi_scaling()
@@ -145,3 +158,4 @@ if __name__ == "__main__":
     verify_heatmap_floor_point_and_decay()
     verify_streamlit_ui_interactions()
     verify_media_extraction_scripts()
+    verify_roboflow_prediction_parsing()

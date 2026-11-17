@@ -8,7 +8,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import cv2
-from src.detector import detect_library_objects, load_yolo_model
+from src.detector import (
+    DEFAULT_ROBOFLOW_MODEL_ID,
+    DEFAULT_YOLO_MODEL,
+    detect_library_objects,
+    detect_library_objects_roboflow,
+    load_yolo_model,
+)
 from src.seat_monitor import (
     DEFAULT_EMPTY_REF_PATH,
     PolygonPoints,
@@ -36,6 +42,9 @@ def evaluate_single_screenshot(
     inference_size: int,
     empty_ref_path: Path,
     annotated_dir: Path | None,
+    backend: str = "local",
+    model_id: str = DEFAULT_ROBOFLOW_MODEL_ID,
+    api_key: str | None = None,
 ) -> dict[str, str | int]:
     frame = cv2.imread(str(image_path))
     if frame is None:
@@ -43,9 +52,14 @@ def evaluate_single_screenshot(
 
     height, width = frame.shape[:2]
     day, category, number = parse_screenshot_filename(image_path)
-    detections = detect_library_objects(
-        model, frame, confidence_threshold=confidence, inference_size=inference_size
-    )
+    if backend == "roboflow":
+        detections = detect_library_objects_roboflow(
+            frame, model_id=model_id, api_key=api_key, confidence_threshold=confidence
+        )
+    else:
+        detections = detect_library_objects(
+            model, frame, confidence_threshold=confidence, inference_size=inference_size
+        )
     person_count = sum(1 for obj in detections if obj.is_person)
     belonging_count = sum(1 for obj in detections if obj.is_belonging)
 
@@ -116,6 +130,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", default="Mezanin_1", help="Default ROI profile.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
     parser.add_argument("--imgsz", type=int, default=960, help="YOLO inference resolution.")
+    parser.add_argument("--backend", choices=["local", "roboflow"], default="local")
+    parser.add_argument("--model-id", default=DEFAULT_ROBOFLOW_MODEL_ID)
+    parser.add_argument("--api-key", default=None)
     return parser
 
 
@@ -134,16 +151,26 @@ def main() -> None:
         zones, ref_res = {}, (1280, 720)
 
     args.annotated_dir.mkdir(parents=True, exist_ok=True)
-    model = load_yolo_model("yolo11s.pt")
+    model = None if args.backend == "roboflow" else load_yolo_model(DEFAULT_YOLO_MODEL)
 
     rows = [
         evaluate_single_screenshot(
-            img_path, model, zones, ref_res, args.conf, args.imgsz, args.reference, args.annotated_dir
+            img_path,
+            model,
+            zones,
+            ref_res,
+            args.conf,
+            args.imgsz,
+            args.reference,
+            args.annotated_dir,
+            backend=args.backend,
+            model_id=args.model_id,
+            api_key=args.api_key,
         )
         for img_path in image_files
     ]
     write_evaluation_csv(rows, args.output_csv)
-    print(f"Evaluated {len(rows)} screenshots. CSV saved to '{args.output_csv}'.")
+    print(f"Evaluated {len(rows)} screenshots ({args.backend}). CSV saved to '{args.output_csv}'.")
 
 
 if __name__ == "__main__":
