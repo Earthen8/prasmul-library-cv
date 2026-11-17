@@ -31,15 +31,15 @@ from src.traffic_heatmap import (
 from src.ui_styles import apply_custom_styles
 
 
-TABLE_MODE = "Kamera Meja Baca (Seat Occupancy & Abandoned Object)"
-AISLE_MODE = "Kamera Rak Buku (Foot Traffic & Heatmap)"
-HYBRID_RAK2_MODE = "Kamera Rak 2 (Heatmap Lorong + Meja Belakang)"
+AISLE_MODE = "CCTV01 - Rak 1 (Foot Traffic & Heatmap)"
+HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Heatmap Lorong + Meja Belakang)"
+TABLE_MODE = "CCTV03 - Mezanin 1 (Seat Occupancy & Abandoned Object)"
 ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS (Cloud - 86% mAP)"
 LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
 MODE_TO_PROFILE = {
-    TABLE_MODE: "Mezanin_1",
     AISLE_MODE: "Rak_1",
     HYBRID_RAK2_MODE: "Rak_2",
+    TABLE_MODE: "Mezanin_1",
 }
 DEFAULT_ZONES_PATH = Path("config/table_zones.json")
 SAMPLE_VIDEO_PATH = Path("demo/sample_cctv.mp4")
@@ -115,9 +115,9 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
     with st.sidebar:
         st.markdown("## Panel Kontrol Kamera")
         camera_mode = st.selectbox(
-            "Pilih Kategori Kamera CCTV",
-            options=[TABLE_MODE, AISLE_MODE, HYBRID_RAK2_MODE],
-            index=0,
+            "Pilih Kamera CCTV (berdasarkan ID)",
+            options=[AISLE_MODE, HYBRID_RAK2_MODE, TABLE_MODE],
+            index=2,
         )
         st.session_state.detector_backend = st.selectbox(
             "Model Deteksi (Backend)",

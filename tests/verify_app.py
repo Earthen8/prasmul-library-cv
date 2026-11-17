@@ -121,7 +121,7 @@ def verify_streamlit_ui_interactions() -> None:
     assert len(statuses) == 4
     print(f"[PASS] Mezanin_1 UI simulation: {[s.status_label for s in statuses]}.")
 
-    at.selectbox[0].select("Kamera Rak 2 (Heatmap Lorong + Meja Belakang)").run()
+    at.selectbox[0].select("CCTV02 - Rak 2 (Heatmap Lorong + Meja Belakang)").run()
     at.button(key="load_sim_btn").click().run()
     assert not at.exception, f"Rak_2 simulation exception: {at.exception}"
     assert len(at.session_state["table_statuses"]) == 1
