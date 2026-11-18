@@ -46,6 +46,7 @@ class TrafficHeatmapAccumulator:
         frame_width: int,
         decay_factor: float = 0.94,
         min_movement_px: float = 12.0,
+        aisle_zones: dict[str, list[tuple[int, int]]] | None = None,
     ) -> None:
         if frame_height <= 0 or frame_width <= 0:
             raise ValueError(
@@ -58,11 +59,15 @@ class TrafficHeatmapAccumulator:
         self.grid = np.zeros((frame_height, frame_width), dtype=np.float32)
         self.previous_centers: list[tuple[int, int]] = []
         self.cumulative_detections = 0
-        self.sector_totals = {
-            "Lorong Kiri": 0,
-            "Lorong Tengah": 0,
-            "Lorong Kanan": 0,
-        }
+        self.aisle_zones = aisle_zones or {}
+        if self.aisle_zones:
+            self.sector_totals = {name: 0 for name in self.aisle_zones}
+        else:
+            self.sector_totals = {
+                "Lorong Kiri": 0,
+                "Lorong Tengah": 0,
+                "Lorong Kanan": 0,
+            }
 
     def record_persons(
         self,
@@ -79,13 +84,15 @@ class TrafficHeatmapAccumulator:
         moving_count = 0
 
         for person in persons:
+            # Use floor_point for full body, and also check center for head-only blindspot boxes.
             fx, fy = person.floor_point
+            cx, cy = person.center
             if not (0 <= fx < self.frame_width and 0 <= fy < self.frame_height):
                 continue
             current_centers.append((fx, fy))
             if has_significant_movement((fx, fy), self.previous_centers, self.min_movement_px):
                 cv2.circle(self.grid, (fx, fy), 28, 1.0, -1)
-                self._increment_sector(fx)
+                self._increment_sector((fx, fy), (cx, cy))
                 self.cumulative_detections += 1
                 moving_count += 1
 
@@ -101,11 +108,23 @@ class TrafficHeatmapAccumulator:
             peak_sector_name=peak_sector,
         )
 
-    def _increment_sector(self, cx: int) -> None:
+    def _increment_sector(
+        self, floor_pt: tuple[int, int], center_pt: tuple[int, int]
+    ) -> None:
+        if self.aisle_zones:
+            for row_name, pts in self.aisle_zones.items():
+                contour = np.array(pts, dtype=np.int32)
+                in_floor = cv2.pointPolygonTest(contour, (float(floor_pt[0]), float(floor_pt[1])), False) >= 0
+                in_center = cv2.pointPolygonTest(contour, (float(center_pt[0]), float(center_pt[1])), False) >= 0
+                if in_floor or in_center:
+                    self.sector_totals[row_name] += 1
+                    return
+            return
+
         third = self.frame_width / 3.0
-        if cx < third:
+        if floor_pt[0] < third:
             self.sector_totals["Lorong Kiri"] += 1
-        elif cx < 2 * third:
+        elif floor_pt[0] < 2 * third:
             self.sector_totals["Lorong Tengah"] += 1
         else:
             self.sector_totals["Lorong Kanan"] += 1
@@ -129,6 +148,20 @@ def render_heatmap_overlay(
             annotated, 1.0 - blend_alpha, colored_heat, blend_alpha, 0
         )
         annotated[active_mask] = blended[active_mask]
+
+    for row_name, pts in accumulator.aisle_zones.items():
+        contour = np.array(pts, dtype=np.int32)
+        cv2.polylines(annotated, [contour], isClosed=True, color=(200, 180, 0), thickness=1)
+        cv2.putText(
+            annotated,
+            row_name,
+            (pts[0][0] + 6, pts[0][1] + 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 230, 80),
+            1,
+            cv2.LINE_AA,
+        )
 
     for obj in detections:
         if not obj.is_person:

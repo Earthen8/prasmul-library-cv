@@ -18,6 +18,7 @@ from src.seat_monitor import (
     TableZoneStatus,
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
+    load_aisle_zones_with_metadata,
     load_empty_reference_frame,
     load_zones_with_metadata,
     save_empty_reference_frame,
@@ -31,8 +32,8 @@ from src.traffic_heatmap import (
 from src.ui_styles import apply_custom_styles
 
 
-AISLE_MODE = "CCTV01 - Rak 1 (Foot Traffic & Heatmap)"
-HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Heatmap Lorong + Meja Belakang)"
+AISLE_MODE = "CCTV01 - Rak 1 (Meja Kiri + Heatmap Rak)"
+HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Seat Occupancy & Abandoned Object)"
 TABLE_MODE = "CCTV03 - Mezanin 1 (Seat Occupancy & Abandoned Object)"
 ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS v5 (Cloud - Multi-Angle)"
 LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
@@ -391,7 +392,7 @@ def update_ui_placeholders(
     )
     statuses = st.session_state.table_statuses
     summary = st.session_state.aisle_summary
-    if camera_mode == TABLE_MODE:
+    if camera_mode != AISLE_MODE:
         metrics_slot.markdown(format_table_metrics_html(statuses), unsafe_allow_html=True)
         table_slot.markdown(build_table_zones_markdown(statuses))
     else:
@@ -429,7 +430,7 @@ def process_single_video_frame(
         frame, frame_idx, camera_mode, confidence, use_clahe, scaled_zones
     )
     annotated = frame.copy()
-    if camera_mode in (AISLE_MODE, HYBRID_RAK2_MODE):
+    if camera_mode == AISLE_MODE:
         st.session_state.aisle_summary = heatmap_acc.record_persons(
             detections, excluded_zones=scaled_zones
         )
@@ -476,10 +477,16 @@ def run_streaming_loop(
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
     scaled_zones = scale_zones_to_frame(raw_zones, reference_res, width, height)
     profile_name = MODE_TO_PROFILE.get(camera_mode, "Mezanin_1")
+    raw_aisle_zones, aisle_ref = load_aisle_zones_with_metadata(
+        DEFAULT_ZONES_PATH, profile_name=profile_name
+    )
+    scaled_aisle_zones = (
+        scale_zones_to_frame(raw_aisle_zones, aisle_ref, width, height) if raw_aisle_zones else {}
+    )
     empty_reference = load_empty_reference_frame(
         get_profile_empty_ref_path(profile_name), width, height
     )
-    heatmap_acc = TrafficHeatmapAccumulator(height, width)
+    heatmap_acc = TrafficHeatmapAccumulator(height, width, aisle_zones=scaled_aisle_zones)
     idle_frame_timers: dict[str, int] = {}
     frame_idx = 0
     try:
@@ -516,7 +523,7 @@ def run_streaming_loop(
 def render_static_snapshot(
     camera_mode: str, metrics_slot, alert_slot, video_slot, table_slot
 ) -> None:
-    if camera_mode == TABLE_MODE:
+    if camera_mode != AISLE_MODE:
         metrics_slot.markdown(format_table_metrics_html(st.session_state.table_statuses), unsafe_allow_html=True)
         table_slot.markdown(build_table_zones_markdown(st.session_state.table_statuses))
     else:

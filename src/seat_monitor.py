@@ -101,6 +101,27 @@ def load_table_zones(
     return zones
 
 
+def load_aisle_zones_with_metadata(
+    json_path: Path, profile_name: str = "Rak_1"
+) -> tuple[dict[str, PolygonPoints], tuple[int, int]]:
+    if not json_path.exists():
+        return {}, (1280, 720)
+    raw_data = json.loads(json_path.read_text(encoding="utf-8"))
+    root_ref = raw_data.get("reference_resolution", [1280, 720])
+    profiles = raw_data.get("profiles", {})
+    selected_profile = profiles.get(profile_name, {})
+    if not isinstance(selected_profile, dict) or "aisle_zones" not in selected_profile:
+        return {}, (int(root_ref[0]), int(root_ref[1]))
+
+    prof_ref = selected_profile.get("reference_resolution", root_ref)
+    reference_size = (int(prof_ref[0]), int(prof_ref[1]))
+    aisle_raw = selected_profile["aisle_zones"]
+    aisle_zones = {
+        str(name): coerce_to_polygon(coords, str(name)) for name, coords in aisle_raw.items()
+    }
+    return aisle_zones, reference_size
+
+
 def scale_zones_to_frame(
     zones: dict[str, PolygonPoints],
     reference_resolution: tuple[int, int],

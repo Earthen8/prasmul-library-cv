@@ -14,6 +14,7 @@ from src.detector import (
 from src.seat_monitor import (
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
+    load_aisle_zones_with_metadata,
     load_zones_with_metadata,
     scale_zones_to_frame,
 )
@@ -43,13 +44,15 @@ def verify_per_profile_roi_scaling() -> None:
     zones_m1, ref_m1 = load_zones_with_metadata(Path("config/table_zones.json"), "Mezanin_1")
     zones_r2, ref_r2 = load_zones_with_metadata(Path("config/table_zones.json"), "Rak_2")
     zones_r1, ref_r1 = load_zones_with_metadata(Path("config/table_zones.json"), "Rak_1")
-    assert ref_m1 == (1024, 604) and len(zones_m1) == 4
-    assert ref_r2 == (1024, 575) and len(zones_r2) == 1
-    assert ref_r1 == (1920, 1080) and len(zones_r1) == 3
+    aisles_r1, aisle_ref_r1 = load_aisle_zones_with_metadata(Path("config/table_zones.json"), "Rak_1")
+    assert ref_m1 == (1200, 720) and len(zones_m1) == 4
+    assert ref_r2 == (1280, 720) and len(zones_r2) == 3
+    assert ref_r1 == (1280, 720) and len(zones_r1) == 3
+    assert aisle_ref_r1 == (1280, 720) and len(aisles_r1) == 6
 
-    scaled_hd = scale_zones_to_frame(zones_r2, ref_r2, 2048, 1150)
-    orig_pt = zones_r2["Meja_Baca_Belakang"][0]
-    assert scaled_hd["Meja_Baca_Belakang"][0] == (orig_pt[0] * 2, orig_pt[1] * 2)
+    scaled_hd = scale_zones_to_frame(zones_r2, ref_r2, 2560, 1440)
+    orig_pt = zones_r2["Meja_Baca_Utama"][0]
+    assert scaled_hd["Meja_Baca_Utama"][0] == (orig_pt[0] * 2, orig_pt[1] * 2)
     print("[PASS] Per-profile reference resolution & polygon scaling verified for Mezanin_1, Rak_2, Rak_1.")
 
 
@@ -126,12 +129,18 @@ def verify_streamlit_ui_interactions() -> None:
     assert len(statuses) == 4
     print(f"[PASS] Mezanin_1 UI simulation: {[s.status_label for s in statuses]}.")
 
-    at.selectbox[0].select("CCTV02 - Rak 2 (Heatmap Lorong + Meja Belakang)").run()
+    at.selectbox[0].select("CCTV02 - Rak 2 (Seat Occupancy & Abandoned Object)").run()
     at.button(key="load_sim_btn").click().run()
     assert not at.exception, f"Rak_2 simulation exception: {at.exception}"
-    assert len(at.session_state["table_statuses"]) == 1
+    assert len(at.session_state["table_statuses"]) == 3
+
+    at.selectbox[0].select("CCTV01 - Rak 1 (Meja Kiri + Heatmap Rak)").run()
+    at.button(key="load_sim_btn").click().run()
+    assert not at.exception, f"Rak_1 simulation exception: {at.exception}"
+    assert len(at.session_state["table_statuses"]) == 3
     assert at.session_state["aisle_summary"] is not None
-    print("[PASS] Rak_2 hybrid UI simulation verified.")
+    assert "Baris_Rak_1" in at.session_state["aisle_summary"].sector_counts
+    print("[PASS] Rak_2 seat monitoring & Rak_1 row-by-row heatmap UI simulation verified.")
 
 
 def verify_media_extraction_scripts() -> None:
