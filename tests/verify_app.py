@@ -59,8 +59,8 @@ def verify_per_profile_roi_scaling() -> None:
     assert filtered == [valid_person]
 
     scaled_hd = scale_zones_to_frame(zones_r2, ref_r2, 2560, 1440)
-    orig_pt = zones_r2["Meja_Baca_Utama"][0]
-    assert scaled_hd["Meja_Baca_Utama"][0] == (orig_pt[0] * 2, orig_pt[1] * 2)
+    orig_pt = zones_r2["Meja_Baca_1"][0]
+    assert scaled_hd["Meja_Baca_1"][0] == (orig_pt[0] * 2, orig_pt[1] * 2)
     print("[PASS] Per-profile reference resolution & polygon scaling verified for Mezanin_1, Rak_2, Rak_1.")
 
 
