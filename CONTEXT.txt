@@ -59,17 +59,16 @@ GitHub, silakan copy manual via Google Drive ke folder `demo/` masing-masing):
 Aplikasi dibangun menggunakan Python + Streamlit (`app.py`) dengan 2 pilihan
 backend deteksi yang bisa diganti langsung di sidebar:
 
-A. Mode Utama — Roboflow Cloud Inference (RF-DETR NAS)
-   - Model dilatih di Cloud Roboflow pada 92 gambar unik CCTV hasil kurasi
-     (Split: 70% Train / 20% Valid / 10% Test).
+A. Mode Utama — Roboflow Cloud Inference (RF-DETR NAS v5 Multi-Angle)
+   - Model dilatih di Cloud Roboflow pada 292 gambar multi-angle (CCTV01, CCTV02, CCTV03)
+     dengan split 70% Train / 20% Valid / 10% Test.
    - Arsitektur: RF-DETR NAS (dipilih otomatis via Neural Architecture Search).
-   - Metrik Test Set di Roboflow:
-     * mAP@50    : 86.0%
-     * Recall    : 87.5%
-     * Precision : 77.8%
-     * F1 Score  : 82.4%
-     * Latency   : ~8.2 ms (Cloud API)
-   - Model ID: terra-yy9jm/prasmul-library-cv-2-rfdetr-nas-pecoret-t1--cefe76
+   - Metrik Test Set di Roboflow (v5 Multi-Angle):
+     * mAP@50    : 76.3%
+     * Precision : 82.3%
+     * Recall    : 62.0%
+     * F1 Score  : 67.9%
+   - Model ID: terra-yy9jm/prasmul-library-cv-5-rfdetr-nas-t1--d2dbfd
 
 B. Mode Offline — Hybrid Lokal (YOLO11s + HSV Background Differencing)
    - Model: `yolo11s.pt` (imgsz=960, conf=0.25) + normalisasi cahaya CLAHE.

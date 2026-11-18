@@ -34,7 +34,7 @@ from src.ui_styles import apply_custom_styles
 AISLE_MODE = "CCTV01 - Rak 1 (Foot Traffic & Heatmap)"
 HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Heatmap Lorong + Meja Belakang)"
 TABLE_MODE = "CCTV03 - Mezanin 1 (Seat Occupancy & Abandoned Object)"
-ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS (Cloud - 86% mAP)"
+ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS v5 (Cloud - Multi-Angle)"
 LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
 MODE_TO_PROFILE = {
     AISLE_MODE: "Rak_1",
