@@ -1,6 +1,11 @@
 import argparse
 from pathlib import Path
+import sys
 import cv2
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 VALID_DAYS = {"Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"}
@@ -182,6 +187,59 @@ def extract_reference_frame(
         capture.release()
 
 
+def score_candidate_frames(
+    capture: cv2.VideoCapture,
+    step_frames: int,
+    total_frames: int,
+    model,
+    conf: float = 0.25,
+) -> list[tuple[int, int]]:
+    from src.detector import detect_library_objects
+
+    scored: list[tuple[int, int]] = []
+    for frame_idx in range(0, total_frames, step_frames):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            continue
+        objs = detect_library_objects(model, frame, confidence_threshold=conf, inference_size=640)
+        person_count = sum(1 for obj in objs if obj.is_person)
+        scored.append((person_count, frame_idx))
+    return scored
+
+
+def extract_smart_frames(
+    video_path: Path,
+    output_dir: Path,
+    day_name: str,
+    category: str,
+    frame_count: int = 67,
+    start_number: int = 1,
+    sample_every_seconds: int = 30,
+) -> int:
+    from src.detector import load_yolo_model
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    capture = open_video_capture(video_path)
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 15.0
+        total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        step_frames = max(1, int(round(fps * sample_every_seconds)))
+        model = load_yolo_model("yolo11n.pt")
+        scored = score_candidate_frames(capture, step_frames, total_frames, model)
+        scored.sort(key=lambda item: item[0], reverse=True)
+        top_indices = sorted(idx for _, idx in scored[:frame_count])
+
+        saved_count = 0
+        for offset, frame_idx in enumerate(top_indices):
+            filename = f"{day_name}_{category}_{start_number + offset:03d}.jpg"
+            if save_single_frame(capture, frame_idx, output_dir / filename):
+                saved_count += 1
+        return saved_count
+    finally:
+        capture.release()
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Extract evaluation screenshots and short demo clips from CCTV videos."
@@ -210,6 +268,19 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--output", type=Path, default=Path("config/empty_reference.jpg"), help="Output JPG path."
     )
     ref_parser.add_argument("--time", default="00:00:00", help="Timestamp (MM:SS or HH:MM:SS).")
+
+    smart_parser = subparsers.add_parser(
+        "smart-frames", help="Scan long video and extract top N busiest frames."
+    )
+    smart_parser.add_argument("--input", required=True, type=Path, help="Input video file.")
+    smart_parser.add_argument("--output-dir", required=True, type=Path, help="Output folder.")
+    smart_parser.add_argument("--day", required=True, choices=sorted(VALID_DAYS))
+    smart_parser.add_argument("--category", required=True, choices=sorted(VALID_CATEGORIES))
+    smart_parser.add_argument("--count", type=int, default=67, help="Number of busiest frames.")
+    smart_parser.add_argument("--start-number", type=int, default=1, help="Starting index.")
+    smart_parser.add_argument(
+        "--sample-every", type=int, default=30, help="Scan interval in seconds."
+    )
     return parser
 
 
@@ -242,6 +313,17 @@ def main() -> None:
             timestamp=args.time,
         )
         print(f"Saved empty reference frame to '{saved_path}'.")
+    elif args.command == "smart-frames":
+        saved = extract_smart_frames(
+            video_path=args.input,
+            output_dir=args.output_dir,
+            day_name=args.day,
+            category=args.category,
+            frame_count=args.count,
+            start_number=args.start_number,
+            sample_every_seconds=args.sample_every,
+        )
+        print(f"Saved {saved} busiest screenshots to '{args.output_dir}'.")
 
 
 if __name__ == "__main__":
