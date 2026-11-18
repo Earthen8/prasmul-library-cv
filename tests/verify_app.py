@@ -14,7 +14,9 @@ from src.detector import (
 from src.seat_monitor import (
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
+    filter_ignored_detections,
     load_aisle_zones_with_metadata,
+    load_ignore_zones_with_metadata,
     load_zones_with_metadata,
     scale_zones_to_frame,
 )
@@ -45,10 +47,16 @@ def verify_per_profile_roi_scaling() -> None:
     zones_r2, ref_r2 = load_zones_with_metadata(Path("config/table_zones.json"), "Rak_2")
     zones_r1, ref_r1 = load_zones_with_metadata(Path("config/table_zones.json"), "Rak_1")
     aisles_r1, aisle_ref_r1 = load_aisle_zones_with_metadata(Path("config/table_zones.json"), "Rak_1")
+    ignores_r1, _ = load_ignore_zones_with_metadata(Path("config/table_zones.json"), "Rak_1")
     assert ref_m1 == (1200, 720) and len(zones_m1) == 4
     assert ref_r2 == (1280, 720) and len(zones_r2) == 3
     assert ref_r1 == (1280, 720) and len(zones_r1) == 3
-    assert aisle_ref_r1 == (1280, 720) and len(aisles_r1) == 6
+    assert aisle_ref_r1 == (1280, 720) and len(aisles_r1) == 5
+    assert len(ignores_r1) == 1
+    ignored_person = DetectedObject(0, "person", 0.9, (1100, 30, 1180, 120), (1140, 75))
+    valid_person = DetectedObject(0, "person", 0.9, (600, 400, 660, 520), (630, 460))
+    filtered = filter_ignored_detections([ignored_person, valid_person], ignores_r1)
+    assert filtered == [valid_person]
 
     scaled_hd = scale_zones_to_frame(zones_r2, ref_r2, 2560, 1440)
     orig_pt = zones_r2["Meja_Baca_Utama"][0]
@@ -139,7 +147,7 @@ def verify_streamlit_ui_interactions() -> None:
     assert not at.exception, f"Rak_1 simulation exception: {at.exception}"
     assert len(at.session_state["table_statuses"]) == 3
     assert at.session_state["aisle_summary"] is not None
-    assert "Baris_Rak_1" in at.session_state["aisle_summary"].sector_counts
+    assert "Baris_Rak_01" in at.session_state["aisle_summary"].sector_counts
     print("[PASS] Rak_2 seat monitoring & Rak_1 row-by-row heatmap UI simulation verified.")
 
 

@@ -101,8 +101,8 @@ def load_table_zones(
     return zones
 
 
-def load_aisle_zones_with_metadata(
-    json_path: Path, profile_name: str = "Rak_1"
+def load_profile_section_with_metadata(
+    json_path: Path, profile_name: str, section_key: str
 ) -> tuple[dict[str, PolygonPoints], tuple[int, int]]:
     if not json_path.exists():
         return {}, (1280, 720)
@@ -110,16 +110,28 @@ def load_aisle_zones_with_metadata(
     root_ref = raw_data.get("reference_resolution", [1280, 720])
     profiles = raw_data.get("profiles", {})
     selected_profile = profiles.get(profile_name, {})
-    if not isinstance(selected_profile, dict) or "aisle_zones" not in selected_profile:
+    if not isinstance(selected_profile, dict) or section_key not in selected_profile:
         return {}, (int(root_ref[0]), int(root_ref[1]))
 
     prof_ref = selected_profile.get("reference_resolution", root_ref)
     reference_size = (int(prof_ref[0]), int(prof_ref[1]))
-    aisle_raw = selected_profile["aisle_zones"]
-    aisle_zones = {
-        str(name): coerce_to_polygon(coords, str(name)) for name, coords in aisle_raw.items()
+    section_raw = selected_profile[section_key]
+    section_zones = {
+        str(name): coerce_to_polygon(coords, str(name)) for name, coords in section_raw.items()
     }
-    return aisle_zones, reference_size
+    return section_zones, reference_size
+
+
+def load_aisle_zones_with_metadata(
+    json_path: Path, profile_name: str = "Rak_1"
+) -> tuple[dict[str, PolygonPoints], tuple[int, int]]:
+    return load_profile_section_with_metadata(json_path, profile_name, "aisle_zones")
+
+
+def load_ignore_zones_with_metadata(
+    json_path: Path, profile_name: str = "Rak_1"
+) -> tuple[dict[str, PolygonPoints], tuple[int, int]]:
+    return load_profile_section_with_metadata(json_path, profile_name, "ignore_zones")
 
 
 def scale_zones_to_frame(
@@ -357,5 +369,44 @@ def draw_seat_monitoring_overlay(
         cv2.rectangle(annotated, (x1, label_y - text_h - 8), (x1 + text_w + 10, label_y), box_color, -1)
         cv2.putText(
             annotated, banner_text, (x1 + 5, label_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2
+        )
+    return annotated
+
+
+def filter_ignored_detections(
+    detections: list[DetectedObject], ignore_zones: dict[str, PolygonPoints] | None
+) -> list[DetectedObject]:
+    if not ignore_zones:
+        return detections
+    polys = list(ignore_zones.values())
+    return [
+        obj
+        for obj in detections
+        if not any(is_point_inside_zone(obj.center, poly) for poly in polys)
+    ]
+
+
+def draw_ignore_zones_overlay(
+    frame: np.ndarray, ignore_zones: dict[str, PolygonPoints] | None
+) -> np.ndarray:
+    if not ignore_zones:
+        return frame
+    annotated = frame.copy()
+    for zone_name, poly in ignore_zones.items():
+        pts = np.array(poly, dtype=np.int32).reshape((-1, 1, 2))
+        overlay = annotated.copy()
+        cv2.fillPoly(overlay, [pts], (40, 40, 140))
+        annotated = cv2.addWeighted(annotated, 0.80, overlay, 0.20, 0)
+        cv2.polylines(annotated, [pts], isClosed=True, color=(50, 50, 220), thickness=2)
+        anchor = (pts[0][0][0] + 8, max(24, pts[0][0][1] + 22))
+        cv2.putText(
+            annotated,
+            f"DIABAIKAN: {zone_name}",
+            anchor,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            (180, 180, 255),
+            2,
+            cv2.LINE_AA,
         )
     return annotated

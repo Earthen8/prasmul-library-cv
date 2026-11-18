@@ -15,9 +15,12 @@ from src.detector import (
 from src.seat_monitor import (
     PolygonPoints,
     TableZoneStatus,
+    draw_ignore_zones_overlay,
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
+    filter_ignored_detections,
     load_aisle_zones_with_metadata,
+    load_ignore_zones_with_metadata,
     load_zones_with_metadata,
     scale_zones_to_frame,
 )
@@ -397,13 +400,14 @@ def process_single_video_frame(
     scaled_zones: dict[str, PolygonPoints],
     idle_frame_timers: dict[str, int],
     heatmap_acc: TrafficHeatmapAccumulator,
-    empty_reference=None,
+    scaled_ignore_zones: dict[str, PolygonPoints] | None = None,
 ):
     st.session_state.processed_count += 1
-    detections = resolve_frame_detections(
+    raw_detections = resolve_frame_detections(
         frame, frame_idx, camera_mode, confidence, use_clahe, scaled_zones
     )
-    annotated = frame.copy()
+    detections = filter_ignored_detections(raw_detections, scaled_ignore_zones)
+    annotated = draw_ignore_zones_overlay(frame, scaled_ignore_zones)
     if camera_mode == AISLE_MODE:
         st.session_state.aisle_summary = heatmap_acc.record_persons(
             detections, excluded_zones=scaled_zones
@@ -454,6 +458,14 @@ def run_streaming_loop(
     scaled_aisle_zones = (
         scale_zones_to_frame(raw_aisle_zones, aisle_ref, width, height) if raw_aisle_zones else {}
     )
+    raw_ignore_zones, ignore_ref = load_ignore_zones_with_metadata(
+        DEFAULT_ZONES_PATH, profile_name=profile_name
+    )
+    scaled_ignore_zones = (
+        scale_zones_to_frame(raw_ignore_zones, ignore_ref, width, height)
+        if raw_ignore_zones
+        else {}
+    )
     heatmap_acc = TrafficHeatmapAccumulator(height, width, aisle_zones=scaled_aisle_zones)
     idle_frame_timers: dict[str, int] = {}
     frame_idx = 0
@@ -478,6 +490,7 @@ def run_streaming_loop(
                 scaled_zones,
                 idle_frame_timers,
                 heatmap_acc,
+                scaled_ignore_zones=scaled_ignore_zones,
             )
             update_ui_placeholders(camera_mode, annotated, metrics_slot, alert_slot, video_slot, table_slot)
             time.sleep(0.06)

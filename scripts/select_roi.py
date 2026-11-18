@@ -151,9 +151,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--section",
-        choices=["zones", "aisle_zones"],
+        choices=["zones", "aisle_zones", "ignore_zones"],
         default="zones",
-        help="Target section inside profile ('zones' for tables, 'aisle_zones' for bookshelf rows).",
+        help="Target section inside profile ('zones' for tables, 'aisle_zones' for bookshelf rows, 'ignore_zones' for excluded areas).",
     )
     parser.add_argument("--prefix", default="Meja", help="Zone name prefix.")
     parser.add_argument("--output", type=Path, default=Path("config/table_zones.json"))
