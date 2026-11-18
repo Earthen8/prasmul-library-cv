@@ -108,6 +108,7 @@ def save_zones_to_json(
     frame_shape: tuple[int, int, int],
     profile_name: str,
     output_json: Path,
+    section: str = "zones",
 ) -> None:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     height, width = frame_shape[:2]
@@ -120,10 +121,12 @@ def save_zones_to_json(
         except json.JSONDecodeError:
             pass
     existing["reference_resolution"] = [width, height]
-    existing.setdefault("profiles", {})[profile_name] = {
-        "reference_resolution": [width, height],
-        "zones": zones,
-    }
+    profile_entry = existing.setdefault("profiles", {}).get(profile_name, {})
+    if not isinstance(profile_entry, dict):
+        profile_entry = {}
+    profile_entry["reference_resolution"] = [width, height]
+    profile_entry[section] = zones
+    existing["profiles"][profile_name] = profile_entry
     output_json.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
@@ -146,6 +149,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--profile", default="Mezanin_1", help="Camera profile key (e.g. Mezanin_1, Rak_2)."
     )
+    parser.add_argument(
+        "--section",
+        choices=["zones", "aisle_zones"],
+        default="zones",
+        help="Target section inside profile ('zones' for tables, 'aisle_zones' for bookshelf rows).",
+    )
     parser.add_argument("--prefix", default="Meja", help="Zone name prefix.")
     parser.add_argument("--output", type=Path, default=Path("config/table_zones.json"))
     parser.add_argument("--preview", type=Path, default=Path("config/table_zones_preview.jpg"))
@@ -165,9 +174,11 @@ def main() -> None:
         print("No table zones were selected. Exiting without saving.")
         return
 
-    save_zones_to_json(zones, frame.shape, args.profile, args.output)
+    save_zones_to_json(zones, frame.shape, args.profile, args.output, section=args.section)
     draw_saved_zones_preview(frame, zones, args.preview)
-    print(f"Saved {len(zones)} zones under profile '{args.profile}' to '{args.output}'.")
+    print(
+        f"Saved {len(zones)} {args.section} under profile '{args.profile}' to '{args.output}'."
+    )
 
 
 if __name__ == "__main__":

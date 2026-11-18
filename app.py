@@ -13,15 +13,12 @@ from src.detector import (
     load_yolo_model,
 )
 from src.seat_monitor import (
-    DEFAULT_EMPTY_REF_PATH,
     PolygonPoints,
     TableZoneStatus,
     draw_seat_monitoring_overlay,
     evaluate_all_table_zones,
     load_aisle_zones_with_metadata,
-    load_empty_reference_frame,
     load_zones_with_metadata,
-    save_empty_reference_frame,
     scale_zones_to_frame,
 )
 from src.traffic_heatmap import (
@@ -182,22 +179,10 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
             value=True,
             help="Menyeimbangkan kontras area gelap di dekat jendela terang sebelum inferensi.",
         )
-        st.session_state.use_hsv_fallback = st.checkbox(
-            "Aktifkan HSV Fallback (Deteksi Okulasi Sofa)",
-            value=(st.session_state.detector_backend == LOCAL_BACKEND),
-            help="Hanya aktifkan jika memakai model offline YOLO11s dan sudah menyimpan frame referensi kosong untuk kamera ini.",
-        )
     return camera_mode, frame_skip, idle_threshold, confidence, use_clahe
 
 
-def get_profile_empty_ref_path(profile_name: str) -> Path:
-    per_profile = Path(f"config/empty_reference_{profile_name}.jpg")
-    if per_profile.exists() or profile_name != "Rak_1":
-        return per_profile
-    return DEFAULT_EMPTY_REF_PATH
-
-
-def render_video_source_buttons(zones: dict[str, PolygonPoints], profile_name: str) -> None:
+def render_video_source_buttons(zones: dict[str, PolygonPoints]) -> None:
     with st.sidebar:
         st.markdown("### Sumber Stream Video")
         if st.button("Muat & Jalankan Simulasi Demo", key="load_sim_btn", width="stretch"):
@@ -227,17 +212,6 @@ def render_video_source_buttons(zones: dict[str, PolygonPoints], profile_name: s
                 width="stretch",
             ):
                 st.session_state.is_streaming = False
-
-        if st.button(
-            "Simpan Frame Ini sebagai Referensi Kosong",
-            key="save_empty_ref_btn",
-            disabled=st.session_state.last_frame_rgb is None,
-            width="stretch",
-        ):
-            bgr = cv2.cvtColor(st.session_state.last_frame_rgb, cv2.COLOR_RGB2BGR)
-            ref_path = get_profile_empty_ref_path(profile_name)
-            save_empty_reference_frame(bgr, ref_path)
-            st.success(f"Referensi kosong untuk '{profile_name}' disimpan ke '{ref_path}'.")
 
 
 def render_empty_or_error_state() -> bool:
@@ -436,7 +410,6 @@ def process_single_video_frame(
         )
         annotated = render_heatmap_overlay(annotated, heatmap_acc, detections)
     if camera_mode in (TABLE_MODE, AISLE_MODE, HYBRID_RAK2_MODE) and scaled_zones:
-        active_ref = empty_reference if st.session_state.get("use_hsv_fallback") else None
         st.session_state.table_statuses = evaluate_all_table_zones(
             scaled_zones,
             detections,
@@ -444,8 +417,6 @@ def process_single_video_frame(
             fps,
             idle_threshold,
             idle_frame_timers,
-            current_frame=frame if active_ref is not None else None,
-            empty_reference=active_ref,
         )
         annotated = draw_seat_monitoring_overlay(
             annotated, st.session_state.table_statuses, detections
@@ -483,9 +454,6 @@ def run_streaming_loop(
     scaled_aisle_zones = (
         scale_zones_to_frame(raw_aisle_zones, aisle_ref, width, height) if raw_aisle_zones else {}
     )
-    empty_reference = load_empty_reference_frame(
-        get_profile_empty_ref_path(profile_name), width, height
-    )
     heatmap_acc = TrafficHeatmapAccumulator(height, width, aisle_zones=scaled_aisle_zones)
     idle_frame_timers: dict[str, int] = {}
     frame_idx = 0
@@ -496,8 +464,6 @@ def run_streaming_loop(
                 st.session_state.is_streaming = False
                 break
             frame_idx += 1
-            if empty_reference is None:
-                empty_reference = frame.copy()
             if frame_skip > 1 and frame_idx % frame_skip != 1:
                 st.session_state.skipped_count += 1
                 continue
@@ -512,7 +478,6 @@ def run_streaming_loop(
                 scaled_zones,
                 idle_frame_timers,
                 heatmap_acc,
-                empty_reference=empty_reference,
             )
             update_ui_placeholders(camera_mode, annotated, metrics_slot, alert_slot, video_slot, table_slot)
             time.sleep(0.06)
@@ -561,7 +526,7 @@ def main() -> None:
         st.session_state.error_message = str(error)
         zones, reference_res = {}, (1024, 604)
 
-    render_video_source_buttons(zones, profile_name)
+    render_video_source_buttons(zones)
     if render_empty_or_error_state():
         return
 
