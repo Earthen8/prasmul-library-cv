@@ -68,7 +68,7 @@ A. Mode Utama — Roboflow Cloud Inference (RF-DETR NAS v5 Multi-Angle)
      * Precision : 82.3%
      * Recall    : 62.0%
      * F1 Score  : 67.9%
-   - Model ID: terra-yy9jm/prasmul-library-cv-5-rfdetr-nas-t1--d2dbfd
+   - Model ID: terra-yy9jm/prasmul-library-cv-6-rfdetr-nas-t1--b8c736
 
 B. Mode Offline — Hybrid Lokal (YOLO11s + HSV Background Differencing)
    - Model: `yolo11s.pt` (imgsz=960, conf=0.25) + normalisasi cahaya CLAHE.

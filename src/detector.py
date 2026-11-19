@@ -19,7 +19,7 @@ CUSTOM_TARGET_LABELS = {"person", "belonging", *BELONGING_CLASS_NAMES.values()}
 TARGET_CLASS_IDS = [PERSON_CLASS_ID, *BELONGING_CLASS_NAMES.keys()]
 DEFAULT_YOLO_IMGSZ = 960
 DEFAULT_YOLO_MODEL = "best.pt" if Path("best.pt").exists() else "yolo11s.pt"
-DEFAULT_ROBOFLOW_MODEL_ID = "terra-yy9jm/prasmul-library-cv-5-rfdetr-nas-t1--d2dbfd"
+DEFAULT_ROBOFLOW_MODEL_ID = "terra-yy9jm/prasmul-library-cv-6-rfdetr-nas-t1--b8c736"
 ROBOFLOW_SERVERLESS_URL = "https://serverless.roboflow.com"
 
 

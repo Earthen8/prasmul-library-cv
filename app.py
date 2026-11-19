@@ -36,7 +36,7 @@ from src.ui_styles import apply_custom_styles
 AISLE_MODE = "CCTV01 - Rak 1 (Meja Kiri + Heatmap Rak)"
 HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Seat Occupancy & Abandoned Object)"
 TABLE_MODE = "CCTV03 - Mezanin 1 (Seat Occupancy & Abandoned Object)"
-ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS v5 (Cloud - Multi-Angle)"
+ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS v6 (Cloud - Multi-Angle)"
 LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
 SINGLE_VIEW_MODE = "Monitoring Real-Time (Single Model)"
 COMPARE_M0_M2_MODE = "Perbandingan M0 vs M2 (Demo UAS Berdampingan)"
@@ -610,7 +610,7 @@ def render_side_by_side_comparison_view(
             f"Kecepatan: **{m0_ms:.1f} ms** ({1000.0 / max(m0_ms, 0.1):.1f} FPS)"
         )
     with col_m2:
-        st.markdown("### M2 — Model Baru (RF-DETR NAS v5 Multi-Angle)")
+        st.markdown("### M2 — Model Baru (RF-DETR NAS v6 Multi-Angle)")
         st.image(m2_img, width="stretch")
         st.success(
             f"Deteksi: **{len(m2_dets)} objek** "
