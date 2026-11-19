@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 import time
 import cv2
+import numpy as np
 import streamlit as st
 
 from src.demo_generator import build_simulated_detections, generate_sample_cctv_video
@@ -37,6 +38,8 @@ HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Seat Occupancy & Abandoned Object)"
 TABLE_MODE = "CCTV03 - Mezanin 1 (Seat Occupancy & Abandoned Object)"
 ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS v5 (Cloud - Multi-Angle)"
 LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
+SINGLE_VIEW_MODE = "Monitoring Real-Time (Single Model)"
+COMPARE_M0_M2_MODE = "Perbandingan M0 vs M2 (Demo UAS Berdampingan)"
 MODE_TO_PROFILE = {
     AISLE_MODE: "Rak_1",
     HYBRID_RAK2_MODE: "Rak_2",
@@ -65,6 +68,8 @@ def init_session_state() -> None:
         "error_message": None,
         "detector_backend": ROBOFLOW_BACKEND,
         "roboflow_api_key": "",
+        "last_latency_ms": 0.0,
+        "demo_view_mode": SINGLE_VIEW_MODE,
     }
     for key, default_val in defaults.items():
         if key not in st.session_state:
@@ -134,6 +139,11 @@ def activate_simulation_demo(zones: dict[str, PolygonPoints]) -> None:
 def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
     with st.sidebar:
         st.markdown("## Panel Kontrol Kamera")
+        st.session_state.demo_view_mode = st.radio(
+            "Mode Tampilan Demo UAS",
+            options=[SINGLE_VIEW_MODE, COMPARE_M0_M2_MODE],
+            index=0,
+        )
         camera_mode = st.selectbox(
             "Pilih Kamera CCTV (berdasarkan ID)",
             options=[AISLE_MODE, HYBRID_RAK2_MODE, TABLE_MODE],
@@ -336,20 +346,24 @@ def resolve_frame_detections(
     use_clahe: bool,
     scaled_zones: dict[str, PolygonPoints],
 ):
+    start_time = time.perf_counter()
     if st.session_state.is_simulation_clip:
-        return build_simulated_detections(frame_index, camera_mode, scaled_zones)
-    if st.session_state.get("detector_backend") == ROBOFLOW_BACKEND:
-        return detect_library_objects_roboflow(
+        detections = build_simulated_detections(frame_index, camera_mode, scaled_zones)
+    elif st.session_state.get("detector_backend") == ROBOFLOW_BACKEND:
+        detections = detect_library_objects_roboflow(
             frame,
             model_id=DEFAULT_ROBOFLOW_MODEL_ID,
             api_key=st.session_state.get("roboflow_api_key") or None,
             confidence_threshold=confidence,
             use_clahe=use_clahe,
         )
-    model = get_cached_yolo_model(DEFAULT_YOLO_MODEL)
-    return detect_library_objects(
-        model, frame, confidence_threshold=confidence, use_clahe=use_clahe
-    )
+    else:
+        model = get_cached_yolo_model(DEFAULT_YOLO_MODEL)
+        detections = detect_library_objects(
+            model, frame, confidence_threshold=confidence, use_clahe=use_clahe
+        )
+    st.session_state.last_latency_ms = (time.perf_counter() - start_time) * 1000.0
+    return detections
 
 
 def update_ui_placeholders(
@@ -362,9 +376,15 @@ def update_ui_placeholders(
 ) -> None:
     rgb_frame = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
     st.session_state.last_frame_rgb = rgb_frame
+    lat_ms = float(st.session_state.get("last_latency_ms", 0.0))
+    fps_est = (1000.0 / lat_ms) if lat_ms > 0 else 0.0
     video_slot.image(
         rgb_frame,
-        caption=f"Stream Aktif | Diproses: {st.session_state.processed_count} | Dilewati (skip): {st.session_state.skipped_count}",
+        caption=(
+            f"Stream Aktif | Diproses: {st.session_state.processed_count} | "
+            f"Dilewati: {st.session_state.skipped_count} | "
+            f"Inferensi: {lat_ms:.1f} ms ({fps_est:.1f} FPS)"
+        ),
         width="stretch",
     )
     statuses = st.session_state.table_statuses
@@ -521,6 +541,85 @@ def render_static_snapshot(
         )
 
 
+def render_side_by_side_comparison_view(
+    confidence: float,
+    use_clahe: bool,
+    raw_zones: dict[str, PolygonPoints],
+    reference_res: tuple[int, int],
+    profile_name: str,
+) -> None:
+    st.markdown("## Demo Perbandingan Berdampingan: M0 (YOLO COCO) vs M2 (Model Baru)")
+    st.caption(
+        f"Confidence threshold aktif: **{confidence:.2f}** | Profil ROI: **{profile_name}**. "
+        "Unggah 1 gambar dari set demo untuk membandingkan M0 dan M2 secara langsung."
+    )
+    demo_image = st.file_uploader(
+        "Unggah Gambar Set Demo (.jpg / .png) untuk Perbandingan M0 vs M2",
+        type=["jpg", "jpeg", "png"],
+        key="compare_demo_img",
+    )
+    if demo_image is None:
+        return
+
+    raw_bytes = np.frombuffer(demo_image.getvalue(), dtype=np.uint8)
+    frame = cv2.imdecode(raw_bytes, cv2.IMREAD_COLOR)
+    if frame is None:
+        st.error("Gagal membaca gambar yang diunggah.")
+        return
+
+    height, width = frame.shape[:2]
+    scaled_zones = scale_zones_to_frame(raw_zones, reference_res, width, height)
+    raw_ignores, ignore_ref = load_ignore_zones_with_metadata(DEFAULT_ZONES_PATH, profile_name)
+    scaled_ignores = scale_zones_to_frame(raw_ignores, ignore_ref, width, height) if raw_ignores else {}
+
+    t0 = time.perf_counter()
+    m0_model = get_cached_yolo_model("yolo11s.pt")
+    m0_dets = filter_ignored_detections(
+        detect_library_objects(m0_model, frame, confidence_threshold=confidence, use_clahe=use_clahe),
+        scaled_ignores,
+    )
+    m0_ms = (time.perf_counter() - t0) * 1000.0
+
+    t1 = time.perf_counter()
+    m2_dets = filter_ignored_detections(
+        detect_library_objects_roboflow(
+            frame,
+            model_id=DEFAULT_ROBOFLOW_MODEL_ID,
+            api_key=st.session_state.get("roboflow_api_key") or None,
+            confidence_threshold=confidence,
+            use_clahe=use_clahe,
+        ),
+        scaled_ignores,
+    )
+    m2_ms = (time.perf_counter() - t1) * 1000.0
+
+    base = draw_ignore_zones_overlay(frame, scaled_ignores)
+    m0_statuses = evaluate_all_table_zones(scaled_zones, m0_dets, 1, 15.0, 900.0, {})
+    m2_statuses = evaluate_all_table_zones(scaled_zones, m2_dets, 1, 15.0, 900.0, {})
+    m0_img = cv2.cvtColor(draw_seat_monitoring_overlay(base, m0_statuses, m0_dets), cv2.COLOR_BGR2RGB)
+    m2_img = cv2.cvtColor(draw_seat_monitoring_overlay(base, m2_statuses, m2_dets), cv2.COLOR_BGR2RGB)
+
+    col_m0, col_m2 = st.columns(2)
+    with col_m0:
+        st.markdown("### M0 — Model Lama (YOLO11s COCO Pretrained)")
+        st.image(m0_img, width="stretch")
+        st.info(
+            f"Deteksi: **{len(m0_dets)} objek** "
+            f"(Person: {sum(o.is_person for o in m0_dets)}, Belonging: {sum(o.is_belonging for o in m0_dets)}) | "
+            f"Meja Terisi: **{sum(s.is_occupied for s in m0_statuses)}/{len(m0_statuses)}** | "
+            f"Kecepatan: **{m0_ms:.1f} ms** ({1000.0 / max(m0_ms, 0.1):.1f} FPS)"
+        )
+    with col_m2:
+        st.markdown("### M2 — Model Baru (RF-DETR NAS v5 Multi-Angle)")
+        st.image(m2_img, width="stretch")
+        st.success(
+            f"Deteksi: **{len(m2_dets)} objek** "
+            f"(Person: {sum(o.is_person for o in m2_dets)}, Belonging: {sum(o.is_belonging for o in m2_dets)}) | "
+            f"Meja Terisi: **{sum(s.is_occupied for s in m2_statuses)}/{len(m2_statuses)}** | "
+            f"Kecepatan: **{m2_ms:.1f} ms** ({1000.0 / max(m2_ms, 0.1):.1f} FPS)"
+        )
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Pemantauan CCTV Perpustakaan Prasmul",
@@ -538,6 +637,10 @@ def main() -> None:
     except Exception as error:
         st.session_state.error_message = str(error)
         zones, reference_res = {}, (1024, 604)
+
+    if st.session_state.get("demo_view_mode") == COMPARE_M0_M2_MODE:
+        render_side_by_side_comparison_view(confidence, use_clahe, zones, reference_res, profile_name)
+        return
 
     render_video_source_buttons(zones)
     if render_empty_or_error_state():

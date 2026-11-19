@@ -2,7 +2,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 from streamlit.testing.v1 import AppTest
+from scripts.evaluasi_model import compute_iou, evaluate_predictions_dataset
 from scripts.extract_media import extract_frames_from_video, trim_video_clip
+from scripts.periksa_dataset import detect_cross_split_leakage, validate_label_file
 from src.detector import (
     DetectedObject,
     TARGET_CLASS_IDS,
@@ -173,6 +175,26 @@ def verify_roboflow_prediction_parsing() -> None:
     print("[PASS] Roboflow RF-DETR NAS prediction parsing verified.")
 
 
+def verify_uas_compliance_scripts() -> None:
+    assert abs(compute_iou((0, 0, 100, 100), (0, 0, 100, 100)) - 1.0) < 1e-6
+    assert abs(compute_iou((0, 0, 50, 50), (100, 100, 150, 150))) < 1e-6
+
+    gt = {0: {"img1.jpg": [(10, 10, 110, 110)]}}
+    preds = {0: [("img1.jpg", 0.95, (10, 10, 110, 110))]}
+    metrics = evaluate_predictions_dataset(preds, gt)
+    assert metrics["mAP50"] == 1.0 and metrics["mAP50_95"] == 1.0
+
+    leakage = detect_cross_split_leakage(
+        [
+            {"split": "train", "md5_map": {"a.jpg": "abc"}, "dhash_map": {"a.jpg": "111"}},
+            {"split": "test", "md5_map": {"b.jpg": "abc"}, "dhash_map": {"b.jpg": "111"}},
+        ]
+    )
+    assert len(leakage["exact_duplicates"]) == 1
+    assert len(leakage["near_duplicates"]) == 1
+    print("[PASS] UAS compliance scripts (periksa_dataset.py & evaluasi_model.py) verified.")
+
+
 if __name__ == "__main__":
     verify_letterbox_and_clahe()
     verify_per_profile_roi_scaling()
@@ -182,3 +204,4 @@ if __name__ == "__main__":
     verify_streamlit_ui_interactions()
     verify_media_extraction_scripts()
     verify_roboflow_prediction_parsing()
+    verify_uas_compliance_scripts()
