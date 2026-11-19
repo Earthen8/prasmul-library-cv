@@ -120,7 +120,7 @@ def handle_uploaded_video(uploaded_file) -> None:
 
     inferred_mode = infer_camera_mode_from_filename(uploaded_file.name)
     if inferred_mode and st.session_state.get("camera_mode_select") != inferred_mode:
-        st.session_state.camera_mode_select = inferred_mode
+        st.session_state.pending_camera_mode = inferred_mode
         st.rerun()
 
 
@@ -138,6 +138,10 @@ def activate_simulation_demo(zones: dict[str, PolygonPoints]) -> None:
 
 
 def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
+    pending_mode = st.session_state.pop("pending_camera_mode", None)
+    if pending_mode:
+        st.session_state.camera_mode_select = pending_mode
+
     with st.sidebar:
         st.markdown("## Panel Kontrol Kamera")
         st.session_state.demo_view_mode = st.radio(
