@@ -12,6 +12,7 @@ from src.detector import (
     detect_library_objects,
     detect_library_objects_roboflow,
     load_yolo_model,
+    resolve_m2_weights_path,
 )
 from src.seat_monitor import (
     PolygonPoints,
@@ -37,7 +38,7 @@ AISLE_MODE = "CCTV01 - Rak 1 (Meja Kiri + Heatmap Rak)"
 HYBRID_RAK2_MODE = "CCTV02 - Rak 2 (Seat Occupancy & Abandoned Object)"
 TABLE_MODE = "CCTV03 - Mezanin 1 (Seat Occupancy & Abandoned Object)"
 ROBOFLOW_BACKEND = "Roboflow RF-DETR NAS v6 (Cloud - Multi-Angle)"
-LOCAL_BACKEND = "Lokal YOLO11s + HSV (Offline)"
+LOCAL_BACKEND = "Lokal YOLO11 Fine-Tuned (best.pt / yolo11s.pt)"
 SINGLE_VIEW_MODE = "Monitoring Real-Time (Single Model)"
 COMPARE_M0_M2_MODE = "Perbandingan M0 vs M2 (Demo UAS Berdampingan)"
 MODE_TO_PROFILE = {
@@ -81,7 +82,7 @@ def render_header() -> None:
     with col_title:
         st.markdown("### [LOGO] Pemantauan CCTV Perpustakaan Prasetiya Mulya")
         st.caption(
-            "Status desain: Draft without direction (Dial: ENERGY 1 / RHYTHM 1 / MOTION 1). "
+            "Sistem Pemantauan Okupansi Meja, Barang Tertinggal, dan Trafik Lorong Perpustakaan Berbasis Computer Vision. "
             "Semua metrik dihitung langsung dari frame video dan skala resolusi ROI."
         )
     with col_theme:
@@ -572,26 +573,42 @@ def render_side_by_side_comparison_view(
     raw_ignores, ignore_ref = load_ignore_zones_with_metadata(DEFAULT_ZONES_PATH, profile_name)
     scaled_ignores = scale_zones_to_frame(raw_ignores, ignore_ref, width, height) if raw_ignores else {}
 
-    t0 = time.perf_counter()
     m0_model = get_cached_yolo_model("yolo11s.pt")
+    t0 = time.perf_counter()
     m0_dets = filter_ignored_detections(
         detect_library_objects(m0_model, frame, confidence_threshold=confidence, use_clahe=use_clahe),
         scaled_ignores,
     )
     m0_ms = (time.perf_counter() - t0) * 1000.0
 
-    t1 = time.perf_counter()
-    m2_dets = filter_ignored_detections(
-        detect_library_objects_roboflow(
-            frame,
-            model_id=DEFAULT_ROBOFLOW_MODEL_ID,
-            api_key=st.session_state.get("roboflow_api_key") or None,
-            confidence_threshold=confidence,
-            use_clahe=use_clahe,
-        ),
-        scaled_ignores,
-    )
-    m2_ms = (time.perf_counter() - t1) * 1000.0
+    m2_weights = resolve_m2_weights_path()
+    if m2_weights is not None:
+        m2_model = get_cached_yolo_model(str(m2_weights))
+        t1 = time.perf_counter()
+        m2_dets = filter_ignored_detections(
+            detect_library_objects(m2_model, frame, confidence_threshold=confidence, use_clahe=use_clahe),
+            scaled_ignores,
+        )
+        m2_ms = (time.perf_counter() - t1) * 1000.0
+        m2_title = f"### M2 — Model Baru (Fine-Tuned `{m2_weights.name}`)"
+    else:
+        st.warning(
+            "File bobot lokal `best.pt` belum ditemukan di root proyek atau `weights/m2_best.pt`. "
+            "Sementara menampilkan Roboflow Cloud sebagai pratinjau; simpan `best.pt` hasil training YOLO untuk perbandingan kecepatan lokal yang setara."
+        )
+        t1 = time.perf_counter()
+        m2_dets = filter_ignored_detections(
+            detect_library_objects_roboflow(
+                frame,
+                model_id=DEFAULT_ROBOFLOW_MODEL_ID,
+                api_key=st.session_state.get("roboflow_api_key") or None,
+                confidence_threshold=confidence,
+                use_clahe=use_clahe,
+            ),
+            scaled_ignores,
+        )
+        m2_ms = (time.perf_counter() - t1) * 1000.0
+        m2_title = "### M2 — Model Baru (RF-DETR NAS v6 Cloud Fallback)"
 
     base = draw_ignore_zones_overlay(frame, scaled_ignores)
     m0_statuses = evaluate_all_table_zones(scaled_zones, m0_dets, 1, 15.0, 900.0, {})
@@ -610,7 +627,7 @@ def render_side_by_side_comparison_view(
             f"Kecepatan: **{m0_ms:.1f} ms** ({1000.0 / max(m0_ms, 0.1):.1f} FPS)"
         )
     with col_m2:
-        st.markdown("### M2 — Model Baru (RF-DETR NAS v6 Multi-Angle)")
+        st.markdown(m2_title)
         st.image(m2_img, width="stretch")
         st.success(
             f"Deteksi: **{len(m2_dets)} objek** "

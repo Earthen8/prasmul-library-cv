@@ -16,6 +16,7 @@ from src.detector import (
     detect_library_objects,
     detect_library_objects_roboflow,
     load_yolo_model,
+    resolve_m2_weights_path,
 )
 
 CLASS_NAMES = {0: "person", 1: "belonging"}
@@ -179,7 +180,7 @@ def run_model_benchmark(
     metrics = evaluate_predictions_dataset(preds_by_class, gt_by_class)
     avg_ms = float(np.mean(latencies_ms)) if latencies_ms else 0.0
     fps = (1000.0 / avg_ms) if avg_ms > 0 else 0.0
-    return {
+    row: dict[str, str | float] = {
         "model": model_tag,
         "spec": model_spec,
         "images": len(image_files),
@@ -190,17 +191,84 @@ def run_model_benchmark(
         "avg_latency_ms": round(avg_ms, 2),
         "fps": round(fps, 2),
     }
+    for cls_name in CLASS_NAMES.values():
+        for metric_suffix in ("precision", "recall", "mAP50", "mAP50_95"):
+            key = f"{cls_name}_{metric_suffix}"
+            row[key] = metrics.get(key, 0.0)
+    return row
+
+
+def run_ultralytics_val_benchmark(
+    model_tag: str,
+    model_weights: str,
+    data_yaml: Path,
+    split: str = "test",
+    conf: float = 0.25,
+    imgsz: int = 960,
+) -> dict[str, str | float]:
+    model = load_yolo_model(model_weights)
+    slug = model_tag.lower().replace(" ", "_").replace("(", "").replace(")", "")
+    val_results = model.val(
+        data=str(data_yaml),
+        split=split,
+        imgsz=imgsz,
+        conf=conf,
+        plots=True,
+        project="results/val",
+        name=slug,
+        verbose=False,
+    )
+    box = val_results.box
+    speed = getattr(val_results, "speed", {})
+    infer_ms = float(speed.get("inference", 0.0))
+    fps = (1000.0 / infer_ms) if infer_ms > 0 else 0.0
+    row: dict[str, str | float] = {
+        "model": model_tag,
+        "spec": model_weights,
+        "images": int(getattr(val_results, "seen", 0) or 0),
+        "precision": round(float(box.mp), 4),
+        "recall": round(float(box.mr), 4),
+        "mAP50": round(float(box.map50), 4),
+        "mAP50_95": round(float(box.map), 4),
+        "avg_latency_ms": round(infer_ms, 2),
+        "fps": round(fps, 2),
+    }
+    ap_indices = list(getattr(box, "ap_class_index", []))
+    for idx, cls_id in enumerate(ap_indices):
+        cls_name = CLASS_NAMES.get(int(cls_id), f"class_{cls_id}")
+        p, r, ap50, ap = box.class_result(idx)
+        row[f"{cls_name}_precision"] = round(float(p), 4)
+        row[f"{cls_name}_recall"] = round(float(r), 4)
+        row[f"{cls_name}_mAP50"] = round(float(ap50), 4)
+        row[f"{cls_name}_mAP50_95"] = round(float(ap), 4)
+    return row
+
+
+def print_delta_summary(rows: list[dict[str, str | float]]) -> None:
+    if len(rows) < 2:
+        return
+    m0, m2 = rows[0], rows[-1]
+    print("-" * 72)
+    print(f"Perbandingan Utama: {m0['model']} -> {m2['model']}")
+    for metric in ("precision", "recall", "mAP50", "mAP50_95"):
+        v0, v2 = float(m0[metric]), float(m2[metric])
+        abs_diff = v2 - v0
+        rel_pct = ((abs_diff / v0) * 100.0) if v0 > 0 else 0.0
+        print(f"  {metric:10s}: {v0:.4f} -> {v2:.4f} (Δ={abs_diff:+.4f} | {rel_pct:+.1f}%)")
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Evaluate M0, M1, and M2 on a labeled test set (Precision, Recall, mAP50, mAP50-95, ms/img, FPS)."
+        description="Evaluate M0, M1, and M2 on a labeled test set using Ultralytics model.val() or custom dir."
     )
-    parser.add_argument("--images-dir", required=True, type=Path, help="Test images directory.")
-    parser.add_argument("--labels-dir", required=True, type=Path, help="Test YOLO .txt labels directory.")
+    parser.add_argument("--data", type=Path, default=None, help="Path to YOLO data.yaml (uses official model.val()).")
+    parser.add_argument("--split", default="test", choices=["val", "test"], help="Dataset split for model.val().")
+    parser.add_argument("--images-dir", type=Path, default=None, help="Test images dir (if --data is not set).")
+    parser.add_argument("--labels-dir", type=Path, default=None, help="Test labels dir (if --data is not set).")
     parser.add_argument("--m0", default="yolo11s.pt", help="M0 pretrained COCO weights path.")
     parser.add_argument("--m1", default=None, help="Optional M1 baseline fine-tuned weights path.")
-    parser.add_argument("--m2", default=f"roboflow:{DEFAULT_ROBOFLOW_MODEL_ID}", help="M2 final model path or roboflow:<id>.")
+    default_m2 = str(resolve_m2_weights_path() or "best.pt")
+    parser.add_argument("--m2", default=default_m2, help="M2 final fine-tuned YOLO weights path (e.g. best.pt).")
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=960)
     parser.add_argument("--output-csv", type=Path, default=Path("results/perbandingan_m0_m1_m2.csv"))
@@ -220,13 +288,27 @@ def main() -> None:
         specs.append(("M1 (Baseline FT)", args.m1))
     specs.append(("M2 (Final)", args.m2))
 
-    rows = [
-        run_model_benchmark(tag, spec, args.images_dir, args.labels_dir, conf=args.conf, imgsz=args.imgsz)
-        for tag, spec in specs
-    ]
+    if args.data is not None:
+        if not args.data.exists():
+            raise FileNotFoundError(f"data.yaml not found at '{args.data}'.")
+        rows = [
+            run_ultralytics_val_benchmark(
+                tag, spec, args.data, split=args.split, conf=args.conf, imgsz=args.imgsz
+            )
+            for tag, spec in specs
+        ]
+    else:
+        if args.images_dir is None or args.labels_dir is None:
+            raise ValueError("Provide either '--data path/to/data.yaml' OR both '--images-dir' and '--labels-dir'.")
+        rows = [
+            run_model_benchmark(tag, spec, args.images_dir, args.labels_dir, conf=args.conf, imgsz=args.imgsz)
+            for tag, spec in specs
+        ]
+
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0].keys())
     with args.output_csv.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -236,6 +318,7 @@ def main() -> None:
             f"mAP50={row['mAP50']:.4f} mAP50-95={row['mAP50_95']:.4f} | "
             f"{row['avg_latency_ms']:.1f} ms/img ({row['fps']:.1f} FPS)"
         )
+    print_delta_summary(rows)
     print(f"Saved comparison table to '{args.output_csv}'.")
 
 

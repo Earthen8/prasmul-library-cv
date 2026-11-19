@@ -18,9 +18,18 @@ CUSTOM_TARGET_LABELS = {"person", "belonging", *BELONGING_CLASS_NAMES.values()}
 # Exclude chair (56) and dining table (60) so empty furniture never triggers occupancy.
 TARGET_CLASS_IDS = [PERSON_CLASS_ID, *BELONGING_CLASS_NAMES.keys()]
 DEFAULT_YOLO_IMGSZ = 960
-DEFAULT_YOLO_MODEL = "best.pt" if Path("best.pt").exists() else "yolo11s.pt"
 DEFAULT_ROBOFLOW_MODEL_ID = "terra-yy9jm/prasmul-library-cv-6-rfdetr-nas-t1--b8c736"
 ROBOFLOW_SERVERLESS_URL = "https://serverless.roboflow.com"
+
+
+def resolve_m2_weights_path() -> Path | None:
+    for candidate in (Path("best.pt"), Path("weights/m2_best.pt"), Path("weights/best.pt")):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+DEFAULT_YOLO_MODEL = str(resolve_m2_weights_path() or "yolo11s.pt")
 
 
 @dataclass(frozen=True)
