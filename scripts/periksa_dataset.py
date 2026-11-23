@@ -17,14 +17,15 @@ MIN_OBJECTS_PER_CLASS = 300
 MIN_TEST_IMAGES = 150
 
 
-def compute_dhash(image_path: Path, hash_size: int = 8) -> str | None:
+def compute_dhash(image_path: Path, hash_size: int = 16) -> str | None:
     image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
     if image is None:
         return None
     resized = cv2.resize(image, (hash_size + 1, hash_size), interpolation=cv2.INTER_AREA)
     diff = resized[:, 1:] > resized[:, :-1]
     bits = "".join("1" if val else "0" for val in diff.flatten())
-    return f"{int(bits, 2):016x}"
+    hex_len = (hash_size * hash_size) // 4
+    return f"{int(bits, 2):0{hex_len}x}"
 
 
 def compute_md5(file_path: Path) -> str:
