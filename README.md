@@ -1,4 +1,4 @@
-# Smart Library Monitoring — Computer Vision (UAS Cloud Computing)
+# Smart Library Monitoring: Deteksi Ketersediaan Kursi, Barang Tertinggal, dan Heatmap Trafik Rak Buku Berbasis YOLO11
 
 Sistem pemantauan perpustakaan berbasis Computer Vision (**YOLO11 Fine-Tuned**) dan **Streamlit** untuk menganalisis okupansi meja baca, deteksi barang tertinggal (*abandoned object / idle seat*), dan kepadatan lorong rak buku (*foot traffic heatmap*) secara *real-time* dari 3 sudut kamera CCTV Perpustakaan Universitas Prasetiya Mulya.
 
