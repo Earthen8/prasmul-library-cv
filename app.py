@@ -67,7 +67,7 @@ def init_session_state() -> None:
         "processed_count": 0,
         "skipped_count": 0,
         "error_message": None,
-        "detector_backend": ROBOFLOW_BACKEND,
+        "detector_backend": LOCAL_BACKEND if resolve_m2_weights_path() else ROBOFLOW_BACKEND,
         "roboflow_api_key": "",
         "last_latency_ms": 0.0,
         "demo_view_mode": SINGLE_VIEW_MODE,
@@ -155,10 +155,12 @@ def render_sidebar_controls() -> tuple[str, int, float, float, bool]:
             index=2,
             key="camera_mode_select",
         )
+        backend_options = [LOCAL_BACKEND, ROBOFLOW_BACKEND]
+        default_backend_idx = 0 if resolve_m2_weights_path() else 1
         st.session_state.detector_backend = st.selectbox(
             "Model Deteksi (Backend)",
-            options=[ROBOFLOW_BACKEND, LOCAL_BACKEND],
-            index=0,
+            options=backend_options,
+            index=default_backend_idx,
         )
         if st.session_state.detector_backend == ROBOFLOW_BACKEND:
             st.session_state.roboflow_api_key = st.text_input(
